@@ -233,7 +233,7 @@ fn main() {
         }
         Some("check") => cmd_check(&root, &args[1..]),
         Some("state") => cmd_state(&root, &args[1..]),
-        Some("mcp") => veneer::mcp_unavailable(), // replaced in Task 14
+        Some("mcp") => veneer::mcp::serve(root.clone()),
         _ => {
             eprintln!("{USAGE}");
             2
