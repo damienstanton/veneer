@@ -56,3 +56,61 @@ fn missing_or_corrupt_config_falls_back_to_default() {
     std::fs::write(dir.path().join(".veneer/config.toml"), "not [ valid").unwrap();
     assert_eq!(load_config(dir.path()).loc_soft, 500);
 }
+
+use std::path::PathBuf;
+use veneer::laws::{check_module_budget, loc, walk_files};
+
+fn write(dir: &std::path::Path, rel: &str, contents: &str) {
+    let p = dir.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, contents).unwrap();
+}
+
+#[test]
+fn loc_counts_non_blank_lines() {
+    assert_eq!(loc("a\n\nb\n  \nc\n"), 3);
+    assert_eq!(loc(""), 0);
+}
+
+#[test]
+fn walker_skips_ignored_dirs_and_is_sorted() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/a.rs", "x");
+    write(dir.path(), "src/b.rs", "x");
+    write(dir.path(), ".git/c", "x");
+    write(dir.path(), "target/d.rs", "x");
+    write(dir.path(), ".veneer/state.json", "x");
+    let files = walk_files(dir.path());
+    let rels: Vec<PathBuf> = files
+        .iter()
+        .map(|f| f.strip_prefix(dir.path()).unwrap().to_path_buf())
+        .collect();
+    assert_eq!(rels, vec![PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")]);
+}
+
+#[test]
+fn module_budget_warns_above_soft_errors_above_hard() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "ok.rs", &"line\n".repeat(400));
+    write(dir.path(), "warn.rs", &"line\n".repeat(600));
+    write(dir.path(), "err.rs", &"line\n".repeat(1200));
+    let cfg = veneer::laws::Config::default();
+    let files = walk_files(dir.path());
+    let findings = check_module_budget(dir.path(), &files, &cfg);
+    assert_eq!(findings.len(), 2);
+    let err = findings.iter().find(|f| f.location.path == "err.rs").unwrap();
+    assert_eq!(err.severity, veneer::laws::Severity::Error);
+    assert!(err.message.contains("1200 LoC"));
+    assert!(err.message.contains("hard bound 1000"));
+    let warn = findings.iter().find(|f| f.location.path == "warn.rs").unwrap();
+    assert_eq!(warn.severity, veneer::laws::Severity::Warning);
+}
+
+#[test]
+fn binary_files_are_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
+    let cfg = veneer::laws::Config::default();
+    let files = walk_files(dir.path());
+    assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
+}
