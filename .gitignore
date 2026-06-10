@@ -1,0 +1,7 @@
+docs/superpowers/
+plan.md
+debug
+target/
+.veneer/
+.DS_Store
+**/*.rs.bk
