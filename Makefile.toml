@@ -15,4 +15,4 @@ args = ["install", "--path", "verifier"]
 
 [tasks.self-check]
 dependencies = ["build"]
-script = "verifier/target/release/veneer check"
+script = "verifier/target/release/veneer check verifier skill spec README.md plan.md"
