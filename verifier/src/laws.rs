@@ -377,3 +377,67 @@ pub fn check_idempotency(tree0: &BTreeMap<String, String>, patch_text: &str) -> 
         )]
     }
 }
+
+/// Law 3 (sealing): files outside a declared module must not reference the
+/// module's internal files. Language-agnostic textual check: a reference is
+/// any occurrence of "<module-dir-name>/<internal-file-stem>". Modules are
+/// declared in .veneer/config.toml; nothing declared, nothing to seal.
+pub fn check_sealing(root: &Path, files: &[PathBuf], cfg: &Config) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for m in &cfg.modules {
+        let mod_dir = root.join(&m.path);
+        let dir_name = Path::new(&m.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| m.path.clone());
+        let internal: Vec<String> = files
+            .iter()
+            .filter(|f| f.starts_with(&mod_dir))
+            .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_string()))
+            .filter(|name| !m.public.iter().any(|p| p == name))
+            .filter_map(|name| name.rsplit_once('.').map(|(stem, _)| stem.to_string()))
+            .collect();
+        for f in files.iter().filter(|f| !f.starts_with(&mod_dir)) {
+            let Ok(text) = std::fs::read_to_string(f) else { continue };
+            for stem in &internal {
+                let needle = format!("{dir_name}/{stem}");
+                if let Some(idx) = text.lines().position(|l| l.contains(&needle)) {
+                    findings.push(Finding::error(
+                        Law::ModuleSealing,
+                        &rel(root, f),
+                        Some(idx as u32 + 1),
+                        &format!(
+                            "references internal file '{stem}' of sealed module '{}'",
+                            m.path
+                        ),
+                        Some("depend on the module's declared public surface instead"),
+                    ));
+                }
+            }
+        }
+    }
+    findings
+}
+
+/// The check orchestrator used by CLI, MCP, and intent execution.
+/// paths: restrict budget check to these (empty = whole tree).
+/// diff: also run the idempotency law against the on-disk tree.
+pub fn run_checks(
+    root: &Path,
+    paths: &[PathBuf],
+    diff: Option<&str>,
+    cfg: &Config,
+) -> Vec<Finding> {
+    let all = walk_files(root);
+    let budget_files: Vec<PathBuf> = if paths.is_empty() {
+        all.clone()
+    } else {
+        all.iter().filter(|f| paths.iter().any(|p| f.starts_with(root.join(p)))).cloned().collect()
+    };
+    let mut findings = check_module_budget(root, &budget_files, cfg);
+    findings.extend(check_sealing(root, &all, cfg));
+    if let Some(d) = diff {
+        findings.extend(check_idempotency(&read_tree(root), d));
+    }
+    findings
+}

@@ -226,3 +226,65 @@ fn unparseable_or_inapplicable_patch_is_a_protocol_finding() {
     let findings = check_idempotency(&t0, SIMPLE_PATCH); // greet.txt absent
     assert_eq!(findings[0].law, Law::Protocol);
 }
+
+use veneer::laws::{check_sealing, run_checks, ModuleDecl};
+
+fn sealed_cfg() -> Config {
+    Config {
+        modules: vec![ModuleDecl { path: "src/core".into(), public: vec!["api.rs".into()] }],
+        ..Config::default()
+    }
+}
+
+#[test]
+fn reference_to_internal_file_is_a_sealing_error() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/core/api.rs", "pub fn entry() {}\n");
+    write(dir.path(), "src/core/detail.rs", "pub fn secret() {}\n");
+    write(dir.path(), "src/ui/view.rs", "use crate::core::detail;\n// or: include!(\"../core/detail.rs\")\ncore/detail helper\n");
+    let files = walk_files(dir.path());
+    let findings = check_sealing(dir.path(), &files, &sealed_cfg());
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].law, Law::ModuleSealing);
+    assert_eq!(findings[0].location.path, "src/ui/view.rs");
+}
+
+#[test]
+fn reference_to_public_surface_is_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/core/api.rs", "pub fn entry() {}\n");
+    write(dir.path(), "src/core/detail.rs", "pub fn secret() {}\n");
+    write(dir.path(), "src/ui/view.rs", "use core/api stuff\n");
+    let files = walk_files(dir.path());
+    assert!(check_sealing(dir.path(), &files, &sealed_cfg()).is_empty());
+}
+
+#[test]
+fn module_internals_may_reference_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/core/api.rs", "uses core/detail internally\n");
+    write(dir.path(), "src/core/detail.rs", "fn x() {}\n");
+    let files = walk_files(dir.path());
+    assert!(check_sealing(dir.path(), &files, &sealed_cfg()).is_empty());
+}
+
+#[test]
+fn no_declared_modules_means_no_sealing_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "a.rs", "whatever\n");
+    let files = walk_files(dir.path());
+    assert!(check_sealing(dir.path(), &files, &Config::default()).is_empty());
+}
+
+#[test]
+fn run_checks_composes_all_laws() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "big.rs", &"l\n".repeat(1200));
+    let cfg = Config::default();
+    let findings = run_checks(dir.path(), &[], None, &cfg);
+    assert!(findings.iter().any(|f| f.law == Law::ModuleBudget));
+    // With a diff, idempotency runs against the on-disk tree:
+    write(dir.path(), "greet.txt", "hello\nworld\n");
+    let findings = run_checks(dir.path(), &[], Some(SIMPLE_PATCH), &cfg);
+    assert!(findings.iter().all(|f| f.law != Law::Idempotency));
+}
