@@ -171,6 +171,76 @@ fn step(e: &Expr) -> Result<Expr, KernelError> {
     }
 }
 
+/// Alpha-equivalence of canonical forms, used as the kernel's sound
+/// approximation of extensional function equality (full extensionality has
+/// ∀∃ quantifier complexity and is not decidable — basis §IV).
+fn alpha_eq(a: &Expr, b: &Expr, env: &mut Vec<(String, String)>) -> bool {
+    match (a, b) {
+        (Expr::Var(x), Expr::Var(y)) => env
+            .iter()
+            .rev()
+            .find(|(l, _)| l == x)
+            .map(|(_, r)| r == y)
+            .unwrap_or(x == y),
+        (Expr::Lam(x, ba), Expr::Lam(y, bb)) => {
+            env.push((x.clone(), y.clone()));
+            let r = alpha_eq(ba, bb, env);
+            env.pop();
+            r
+        }
+        (Expr::Ap(f1, a1), Expr::Ap(f2, a2)) => alpha_eq(f1, f2, env) && alpha_eq(a1, a2, env),
+        (Expr::Pair(a1, b1), Expr::Pair(a2, b2)) => alpha_eq(a1, a2, env) && alpha_eq(b1, b2, env),
+        (Expr::Fst(p1), Expr::Fst(p2)) | (Expr::Snd(p1), Expr::Snd(p2)) => alpha_eq(p1, p2, env),
+        (Expr::If(t1, f1, s1), Expr::If(t2, f2, s2)) => {
+            alpha_eq(t1, t2, env) && alpha_eq(f1, f2, env) && alpha_eq(s1, s2, env)
+        }
+        (Expr::Succ(n1), Expr::Succ(n2)) => alpha_eq(n1, n2, env),
+        (
+            Expr::Rec { base: b1, pred: p1, acc: c1, step: s1, target: t1 },
+            Expr::Rec { base: b2, pred: p2, acc: c2, step: s2, target: t2 },
+        ) => {
+            let base_t = alpha_eq(b1, b2, env) && alpha_eq(t1, t2, env);
+            env.push((p1.clone(), p2.clone()));
+            env.push((c1.clone(), c2.clone()));
+            let s = alpha_eq(s1, s2, env);
+            env.pop();
+            env.pop();
+            base_t && s
+        }
+        (Expr::Arrow(a1, b1), Expr::Arrow(a2, b2)) | (Expr::Prod(a1, b1), Expr::Prod(a2, b2)) => {
+            alpha_eq(a1, a2, env) && alpha_eq(b1, b2, env)
+        }
+        _ => a == b,
+    }
+}
+
+/// The verifier judgement M ≐ M' ∈ A (basis §IV): evaluate the type and both
+/// terms to canonical form, then switch on the structure of the type.
+pub fn check_eq(ty: &Expr, m1: &Expr, m2: &Expr, gas: &mut u64) -> Result<bool, KernelError> {
+    let tyv = eval(ty, gas)?;
+    let a = eval(m1, gas)?;
+    let b = eval(m2, gas)?;
+    match tyv {
+        Expr::Bool => Ok(matches!(
+            (&a, &b),
+            (Expr::True, Expr::True) | (Expr::False, Expr::False)
+        )),
+        Expr::Nat => match (&a, &b) {
+            (Expr::Zero, Expr::Zero) => Ok(true),
+            (Expr::Succ(n1), Expr::Succ(n2)) => check_eq(&Expr::Nat, n1, n2, gas),
+            _ => Ok(false),
+        },
+        Expr::Prod(t1, t2) => match (&a, &b) {
+            (Expr::Pair(a1, a2), Expr::Pair(b1, b2)) => {
+                Ok(check_eq(&t1, a1, b1, gas)? && check_eq(&t2, a2, b2, gas)?)
+            }
+            _ => Ok(false),
+        },
+        Expr::Arrow(_, _) => Ok(alpha_eq(&a, &b, &mut Vec::new())),
+        _ => Err(KernelError::Stuck("non-type in type position".into())),
+    }
+}
+
 /// Big-step evaluation E ⇓ E∘: iterate ↦ until canonical, bounded by gas.
 pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
     let mut cur = e.clone();
