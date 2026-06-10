@@ -99,11 +99,14 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 const SKIP_DIRS: &[&str] = &[".git", ".veneer", "target", "node_modules", ".claude", ".agents"];
+/// Generated lockfiles are not first-principles modules; skip them from budget
+/// checks. (Cargo.lock, package-lock.json, yarn.lock, etc.)
+const SKIP_FILE_SUFFIXES: &[&str] = &[".lock"];
 
-/// All regular files under root, sorted, skipping VCS/build/harness dirs.
-/// Deterministic order ⇒ deterministic findings and tree hashes.
-/// Symlinks are not followed: symlinked directories and symlinked files are
-/// both skipped, preventing cycles caused by symlinks to ancestor directories.
+/// All regular files under root, sorted, skipping VCS/build/harness dirs and
+/// generated lockfiles. Deterministic order ⇒ deterministic findings and tree
+/// hashes. Symlinks are not followed: symlinked directories and symlinked files
+/// are both skipped, preventing cycles caused by symlinks to ancestor directories.
 pub fn walk_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -115,7 +118,9 @@ pub fn walk_files(root: &Path) -> Vec<PathBuf> {
             let ft = entry.file_type().ok();
             if ft.map_or(false, |t| t.is_dir()) && !SKIP_DIRS.contains(&name.as_str()) {
                 stack.push(p);
-            } else if ft.map_or(false, |t| t.is_file()) {
+            } else if ft.map_or(false, |t| t.is_file())
+                && !SKIP_FILE_SUFFIXES.iter().any(|s| name.ends_with(s))
+            {
                 out.push(p);
             }
         }
