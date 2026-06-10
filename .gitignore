@@ -1,0 +1,5 @@
+target/
+.veneer/
+.DS_Store
+docs/superpowers/
+plan.md
