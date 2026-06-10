@@ -205,7 +205,7 @@ pub fn parse_patch(s: &str) -> Result<Patch, String> {
                 .ok_or("expected +++ after ---")?;
             let new_stripped = strip_prefix_ab(new_raw.trim());
             // Detect deletion: +++ /dev/null (with or without leading a/b/)
-            let is_delete = new_stripped.contains("dev/null");
+            let is_delete = new_stripped == "/dev/null" || new_stripped == "dev/null";
             let path = if is_delete {
                 strip_prefix_ab(old_raw.trim())
             } else {

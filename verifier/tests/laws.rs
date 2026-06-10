@@ -370,3 +370,17 @@ fn run_checks_composes_all_laws() {
     let findings = run_checks(dir.path(), &[], Some(SIMPLE_PATCH), &cfg);
     assert!(findings.iter().all(|f| f.law != Law::Idempotency));
 }
+
+#[test]
+fn path_containing_dev_null_is_not_a_deletion() {
+    let t0 = tree(&[("src/dev/null_handler.rs", "old\n")]);
+    let patch = "\
+--- a/src/dev/null_handler.rs
++++ b/src/dev/null_handler.rs
+@@ -1,1 +1,1 @@
+-old
++new
+";
+    let t1 = apply_patch(&t0, &parse_patch(patch).unwrap()).unwrap();
+    assert_eq!(t1["src/dev/null_handler.rs"], "new\n");
+}
