@@ -214,3 +214,35 @@ fn alpha_eq_distinguishes_free_from_bound() {
     let mut gas = 100;
     assert!(check_eq(&Expr::arrow(Expr::Bool, Expr::arrow(Expr::Bool, Expr::Bool)), &h1, &h2, &mut gas).unwrap());
 }
+
+#[test]
+fn rec_depth_amplification_is_bounded_not_an_abort() {
+    // rec(0; p, acc. succ^3000(acc))(succ^3000(0)) — passes the entry depth
+    // guard, then each unrolling step amplifies depth; must error, not abort.
+    //
+    // The test spawns a thread with 8 MiB stack to match the assumption baked
+    // into MAX_DEPTH: `subst` is structurally recursive and safe up to that
+    // depth from an 8 MiB stack.  Test-harness threads are smaller by default.
+    let result = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let mut body = Expr::var("acc");
+            for _ in 0..3000 {
+                body = Expr::succ(body);
+            }
+            let mut target = Expr::Zero;
+            for _ in 0..3000 {
+                target = Expr::succ(target);
+            }
+            let e = Expr::rec(Expr::Zero, "p", "acc", body, target);
+            let mut gas = 200_000_000;
+            eval(&e, &mut gas)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(
+        matches!(result, Err(KernelError::TooDeep) | Err(KernelError::OutOfGas)),
+        "expected bounded error, got {result:?}"
+    );
+}

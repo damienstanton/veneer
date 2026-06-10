@@ -385,7 +385,7 @@ fn plug(frames: Vec<Frame>, mut v: Expr) -> Expr {
 /// Big-step evaluation E ⇓ E∘: iterate ↦ until canonical, bounded by gas.
 /// The frame stack de-recurses the eval driver for Succ/Pair contexts; structural
 /// recursion in `is_val`, `subst`, and `step` is bounded by the MAX_DEPTH check
-/// at entry and every 64 reduction steps.
+/// at entry and the unconditional per-step depth check below.
 pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
     if depth(e) > MAX_DEPTH {
         return Err(KernelError::TooDeep);
@@ -393,7 +393,6 @@ pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
 
     let mut cur = e.clone();
     let mut frames: Vec<Frame> = Vec::new();
-    let mut step_count: u64 = 0;
 
     loop {
         // Peel off Succ/Pair wrappers into frames until we reach the active redex.
@@ -455,14 +454,20 @@ pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
             return Err(KernelError::OutOfGas);
         }
         *gas -= 1;
-        step_count += 1;
         let stepped = step(&cur)?;
         cur = plug(frames, stepped);
         frames = Vec::new();
 
-        // Periodically check that intermediate expressions haven't grown too deep
-        // (e.g. rec unrolling can produce large terms before they reduce).
-        if step_count % 64 == 0 && depth(&cur) > MAX_DEPTH {
+        // Unconditional per-step depth check. A single rec-on-Succ step can
+        // amplify expression depth significantly (subst of a deep step body into
+        // a deep rec_n term), so checking only periodically is unsound.
+        //
+        // Invariant: whenever a step begins, depth(cur) <= MAX_DEPTH, which means
+        // each step's internal recursion (subst, is_val) operates on terms of
+        // depth at most MAX_DEPTH. subst is structurally recursive with frames of
+        // ~2 KiB in debug builds; callers must provide ≥ 16 MiB of stack to
+        // keep MAX_DEPTH (4096) levels safe in all build profiles.
+        if depth(&cur) > MAX_DEPTH {
             return Err(KernelError::TooDeep);
         }
     }
