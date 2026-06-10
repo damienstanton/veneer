@@ -114,3 +114,62 @@ fn binary_files_are_skipped() {
     let files = walk_files(dir.path());
     assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
 }
+
+use std::collections::BTreeMap;
+use veneer::laws::{apply_patch, parse_patch};
+
+const SIMPLE_PATCH: &str = "\
+--- a/greet.txt
++++ b/greet.txt
+@@ -1,2 +1,2 @@
+ hello
+-world
++veneer
+";
+
+fn tree(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+    entries.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
+
+#[test]
+fn parse_extracts_paths_and_hunks() {
+    let p = parse_patch(SIMPLE_PATCH).unwrap();
+    assert_eq!(p.files.len(), 1);
+    assert_eq!(p.files[0].path, "greet.txt");
+    assert_eq!(p.files[0].hunks.len(), 1);
+}
+
+#[test]
+fn apply_replaces_lines() {
+    let t0 = tree(&[("greet.txt", "hello\nworld\n")]);
+    let p = parse_patch(SIMPLE_PATCH).unwrap();
+    let t1 = apply_patch(&t0, &p).unwrap();
+    assert_eq!(t1["greet.txt"], "hello\nveneer\n");
+}
+
+#[test]
+fn apply_fails_cleanly_on_context_mismatch() {
+    let t0 = tree(&[("greet.txt", "totally\ndifferent\n")]);
+    let p = parse_patch(SIMPLE_PATCH).unwrap();
+    assert!(apply_patch(&t0, &p).is_err());
+}
+
+#[test]
+fn new_file_patch_creates_file() {
+    let patch = "\
+--- /dev/null
++++ b/new.txt
+@@ -0,0 +1,2 @@
++alpha
++beta
+";
+    let p = parse_patch(patch).unwrap();
+    let t1 = apply_patch(&tree(&[]), &p).unwrap();
+    assert_eq!(t1["new.txt"], "alpha\nbeta\n");
+}
+
+#[test]
+fn malformed_patch_is_an_error_not_a_panic() {
+    assert!(parse_patch("not a patch at all").is_err());
+    assert!(parse_patch("--- a/x\n+++ b/x\n@@ garbage @@\n").is_err());
+}
