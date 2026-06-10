@@ -173,3 +173,56 @@ fn malformed_patch_is_an_error_not_a_panic() {
     assert!(parse_patch("not a patch at all").is_err());
     assert!(parse_patch("--- a/x\n+++ b/x\n@@ garbage @@\n").is_err());
 }
+
+use veneer::laws::{check_idempotency, read_tree, tree_hash};
+
+#[test]
+fn tree_hash_is_deterministic_and_content_sensitive() {
+    let t1 = tree(&[("a.txt", "x\n"), ("b.txt", "y\n")]);
+    let t2 = tree(&[("b.txt", "y\n"), ("a.txt", "x\n")]); // same content, BTreeMap orders
+    assert_eq!(tree_hash(&t1), tree_hash(&t2));
+    let t3 = tree(&[("a.txt", "x\n"), ("b.txt", "z\n")]);
+    assert_ne!(tree_hash(&t1), tree_hash(&t3));
+}
+
+#[test]
+fn read_tree_reads_utf8_files_relative_to_root() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/a.rs", "fn a() {}\n");
+    let t = read_tree(dir.path());
+    assert_eq!(t["src/a.rs"], "fn a() {}\n");
+}
+
+#[test]
+fn replacement_patch_is_idempotent() {
+    // Re-application fails context match → detectable no-op → idempotent.
+    let t0 = tree(&[("greet.txt", "hello\nworld\n")]);
+    assert!(check_idempotency(&t0, SIMPLE_PATCH).is_empty());
+}
+
+#[test]
+fn pure_insertion_patch_is_not_idempotent() {
+    // A hunk that still applies after first application duplicates its line.
+    let t0 = tree(&[("log.txt", "start\n")]);
+    let patch = "\
+--- a/log.txt
++++ b/log.txt
+@@ -1,1 +1,2 @@
+ start
++entry
+";
+    // First apply: start,entry. Second apply: context 'start' still matches
+    // at line 1 → start,entry,entry. Hashes differ → Idempotency finding.
+    let findings = check_idempotency(&t0, patch);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].law, Law::Idempotency);
+}
+
+#[test]
+fn unparseable_or_inapplicable_patch_is_a_protocol_finding() {
+    let t0 = tree(&[]);
+    let findings = check_idempotency(&t0, "garbage");
+    assert_eq!(findings[0].law, Law::Protocol);
+    let findings = check_idempotency(&t0, SIMPLE_PATCH); // greet.txt absent
+    assert_eq!(findings[0].law, Law::Protocol);
+}

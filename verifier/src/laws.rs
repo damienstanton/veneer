@@ -288,3 +288,92 @@ pub fn apply_patch(
     }
     Ok(out)
 }
+
+use crate::kernel;
+
+/// FNV-1a 64-bit. Deterministic content hash — an equality witness, not a
+/// security primitive.
+pub fn fnv64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// Canonical hash of a tree: hash over sorted (path NUL content NUL) pairs.
+pub fn tree_hash(tree: &BTreeMap<String, String>) -> u64 {
+    let mut buf = Vec::new();
+    for (path, contents) in tree {
+        buf.extend_from_slice(path.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(contents.as_bytes());
+        buf.push(0);
+    }
+    fnv64(&buf)
+}
+
+/// Read the working tree (UTF-8 files only) into path → contents.
+pub fn read_tree(root: &Path) -> BTreeMap<String, String> {
+    let mut t = BTreeMap::new();
+    for f in walk_files(root) {
+        if let Ok(text) = std::fs::read_to_string(&f) {
+            t.insert(rel(root, &f), text);
+        }
+    }
+    t
+}
+
+/// Law 3 (idempotency): applying a patch twice must equal applying it once.
+/// T1 = apply(T0, p); T2 = apply(T1, p) or T1 if re-application fails cleanly.
+/// The judgement hash(T1) ≐ hash(T2) runs through the kernel: hashes are
+/// lifted to canonical forms and compared with check_eq (basis §IV).
+pub fn check_idempotency(tree0: &BTreeMap<String, String>, patch_text: &str) -> Vec<Finding> {
+    let patch = match parse_patch(patch_text) {
+        Ok(p) => p,
+        Err(e) => {
+            return vec![Finding::error(
+                Law::Protocol,
+                "<patch>",
+                None,
+                &format!("unparseable patch: {e}"),
+                Some("emit a strict unified diff"),
+            )]
+        }
+    };
+    let t1 = match apply_patch(tree0, &patch) {
+        Ok(t) => t,
+        Err(e) => {
+            return vec![Finding::error(
+                Law::Protocol,
+                "<patch>",
+                None,
+                &format!("patch does not apply: {e}"),
+                Some("rebase the patch against the current tree"),
+            )]
+        }
+    };
+    let t2 = apply_patch(&t1, &patch).unwrap_or_else(|_| t1.clone());
+    let h1 = tree_hash(&t1).to_be_bytes();
+    let h2 = tree_hash(&t2).to_be_bytes();
+    let mut gas = 1_000_000;
+    let equal = kernel::check_eq(
+        &kernel::bytes_type(8),
+        &kernel::from_bytes(&h1),
+        &kernel::from_bytes(&h2),
+        &mut gas,
+    )
+    .unwrap_or(false);
+    if equal {
+        Vec::new()
+    } else {
+        vec![Finding::error(
+            Law::Idempotency,
+            "<patch>",
+            None,
+            "patch is not idempotent: applying twice diverges from applying once",
+            Some("anchor insertions to unique context so re-application fails cleanly"),
+        )]
+    }
+}
