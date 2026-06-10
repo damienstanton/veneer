@@ -31,11 +31,19 @@ pub enum Expr {
     Prod(Box<Expr>, Box<Expr>),
 }
 
+/// Maximum expression depth accepted by `eval` and `check_eq`. Inputs (and
+/// intermediate expressions) deeper than this produce `KernelError::TooDeep`
+/// rather than a native stack overflow.  The frame-stack in `eval` de-recurses
+/// the driver loop only; `is_val`, `subst`, and `step` remain structurally
+/// recursive and are therefore bounded by this limit.
+pub const MAX_DEPTH: usize = 4096;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelError {
     OutOfGas,
     Stuck(String),
     UnboundVar(String),
+    TooDeep,
 }
 
 impl Expr {
@@ -74,6 +82,63 @@ impl Expr {
     }
 }
 
+/// Iterative `Drop` for `Expr` so that deeply-nested terms (e.g. succ^100_000(0))
+/// can be freed without overflowing the native stack.  The default recursive
+/// drop would fault at ≈8 k depth on a typical 8 MiB stack.
+impl Drop for Expr {
+    fn drop(&mut self) {
+        // Collect owned children into a worklist; avoid recursion entirely.
+        let mut worklist: Vec<Expr> = Vec::new();
+
+        // Drain `self` in place so that Rust's implicit drop of fields is a no-op.
+        fn drain(e: &mut Expr, wl: &mut Vec<Expr>) {
+            use std::mem;
+            match e {
+                Expr::Lam(_, b) => {
+                    let child = mem::replace(b.as_mut(), Expr::Zero);
+                    wl.push(child);
+                }
+                Expr::Ap(f, a) | Expr::Pair(f, a) | Expr::Arrow(f, a) | Expr::Prod(f, a) => {
+                    let cf = mem::replace(f.as_mut(), Expr::Zero);
+                    let ca = mem::replace(a.as_mut(), Expr::Zero);
+                    wl.push(cf);
+                    wl.push(ca);
+                }
+                Expr::Fst(a) | Expr::Snd(a) | Expr::Succ(a) => {
+                    let child = mem::replace(a.as_mut(), Expr::Zero);
+                    wl.push(child);
+                }
+                Expr::If(t, f, s) => {
+                    let ct = mem::replace(t.as_mut(), Expr::Zero);
+                    let cf = mem::replace(f.as_mut(), Expr::Zero);
+                    let cs = mem::replace(s.as_mut(), Expr::Zero);
+                    wl.push(ct);
+                    wl.push(cf);
+                    wl.push(cs);
+                }
+                Expr::Rec { base, step, target, .. } => {
+                    let cb = mem::replace(base.as_mut(), Expr::Zero);
+                    let cs = mem::replace(step.as_mut(), Expr::Zero);
+                    let ct = mem::replace(target.as_mut(), Expr::Zero);
+                    wl.push(cb);
+                    wl.push(cs);
+                    wl.push(ct);
+                }
+                // Leaf variants: nothing to drain.
+                Expr::Var(_) | Expr::True | Expr::False | Expr::Zero
+                | Expr::Bool | Expr::Nat => {}
+            }
+        }
+
+        drain(self, &mut worklist);
+        while let Some(mut node) = worklist.pop() {
+            drain(&mut node, &mut worklist);
+            // `node` is dropped here but its children were already drained into
+            // the worklist, so the implicit drop of `node` is cheap (leaf only).
+        }
+    }
+}
+
 /// succ^k(0)
 pub fn nat(k: u64) -> Expr {
     let mut e = Expr::Zero;
@@ -81,6 +146,35 @@ pub fn nat(k: u64) -> Expr {
         e = Expr::succ(e);
     }
     e
+}
+
+/// Enumerate the immediate sub-expressions of `e`.
+fn children(e: &Expr) -> Vec<&Expr> {
+    match e {
+        Expr::Lam(_, b) => vec![b],
+        Expr::Ap(f, a) => vec![f, a],
+        Expr::Pair(a, b) => vec![a, b],
+        Expr::Fst(a) | Expr::Snd(a) | Expr::Succ(a) => vec![a],
+        Expr::If(t, f, s) => vec![t, f, s],
+        Expr::Rec { base, step, target, .. } => vec![base, step, target],
+        Expr::Arrow(a, b) | Expr::Prod(a, b) => vec![a, b],
+        _ => vec![],
+    }
+}
+
+/// Iterative (worklist-based) depth measurement — no recursion, no stack risk.
+fn depth(e: &Expr) -> usize {
+    let mut worklist: Vec<(&Expr, usize)> = vec![(e, 1)];
+    let mut max = 0usize;
+    while let Some((node, d)) = worklist.pop() {
+        if d > max {
+            max = d;
+        }
+        for child in children(node) {
+            worklist.push((child, d + 1));
+        }
+    }
+    max
 }
 
 /// Substitution e[v/x]. We only evaluate closed terms, so v is closed and no
@@ -210,11 +304,22 @@ fn alpha_eq(a: &Expr, b: &Expr, env: &mut Vec<(String, String)>) -> bool {
 
 /// The verifier judgement M ≐ M' ∈ A (basis §IV): evaluate the type and both
 /// terms to canonical form, then switch on the structure of the type.
+/// Structural recursion (Nat/Prod cases) shares the finite gas budget; each
+/// recursive call costs at least 1 gas unit so the budget is always consumed.
 pub fn check_eq(ty: &Expr, m1: &Expr, m2: &Expr, gas: &mut u64) -> Result<bool, KernelError> {
+    if *gas == 0 {
+        return Err(KernelError::OutOfGas);
+    }
+    *gas -= 1;
+
+    if depth(ty) > MAX_DEPTH || depth(m1) > MAX_DEPTH || depth(m2) > MAX_DEPTH {
+        return Err(KernelError::TooDeep);
+    }
+
     let tyv = eval(ty, gas)?;
     let a = eval(m1, gas)?;
     let b = eval(m2, gas)?;
-    match tyv {
+    match &tyv {
         Expr::Bool => Ok(matches!(
             (&a, &b),
             (Expr::True, Expr::True) | (Expr::False, Expr::False)
@@ -226,7 +331,7 @@ pub fn check_eq(ty: &Expr, m1: &Expr, m2: &Expr, gas: &mut u64) -> Result<bool, 
         },
         Expr::Prod(t1, t2) => match (&a, &b) {
             (Expr::Pair(a1, a2), Expr::Pair(b1, b2)) => {
-                Ok(check_eq(&t1, a1, b1, gas)? && check_eq(&t2, a2, b2, gas)?)
+                Ok(check_eq(t1, a1, b1, gas)? && check_eq(t2, a2, b2, gas)?)
             }
             _ => Ok(false),
         },
@@ -236,12 +341,34 @@ pub fn check_eq(ty: &Expr, m1: &Expr, m2: &Expr, gas: &mut u64) -> Result<bool, 
 }
 
 /// Evaluation context frames for iterative handling of Succ/Pair nesting.
-/// Avoids O(n²) stack depth when evaluating inside deep Succ/Pair chains.
+/// The frame stack de-recurses the eval driver loop only; `is_val`, `subst`,
+/// and `step` remain structurally recursive and are safe because all inputs
+/// (and intermediate working expressions) are bounded by MAX_DEPTH.
 #[derive(Debug)]
 enum Frame {
     Succ,
     PairLeft(Expr),   // waiting for left; right already known
     PairRight(Expr),  // left is a value; waiting for right
+}
+
+/// Extract the inner `Box<Expr>` from a `Succ` without pattern-destructuring
+/// (which is forbidden when `Expr` implements `Drop`).
+fn take_succ_inner(e: &mut Expr) -> Box<Expr> {
+    match e {
+        Expr::Succ(inner) => std::mem::replace(inner, Box::new(Expr::Zero)),
+        _ => panic!("take_succ_inner called on non-Succ"),
+    }
+}
+
+/// Extract both `Box<Expr>` children from a `Pair`.
+fn take_pair(e: &mut Expr) -> (Box<Expr>, Box<Expr>) {
+    match e {
+        Expr::Pair(a, b) => (
+            std::mem::replace(a, Box::new(Expr::Zero)),
+            std::mem::replace(b, Box::new(Expr::Zero)),
+        ),
+        _ => panic!("take_pair called on non-Pair"),
+    }
 }
 
 fn plug(frames: Vec<Frame>, mut v: Expr) -> Expr {
@@ -256,28 +383,53 @@ fn plug(frames: Vec<Frame>, mut v: Expr) -> Expr {
 }
 
 /// Big-step evaluation E ⇓ E∘: iterate ↦ until canonical, bounded by gas.
-/// Uses an explicit frame stack for Succ/Pair to avoid deep call-stack recursion.
+/// The frame stack de-recurses the eval driver for Succ/Pair contexts; structural
+/// recursion in `is_val`, `subst`, and `step` is bounded by the MAX_DEPTH check
+/// at entry and every 64 reduction steps.
 pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
+    if depth(e) > MAX_DEPTH {
+        return Err(KernelError::TooDeep);
+    }
+
     let mut cur = e.clone();
     let mut frames: Vec<Frame> = Vec::new();
+    let mut step_count: u64 = 0;
 
     loop {
         // Peel off Succ/Pair wrappers into frames until we reach the active redex.
         loop {
-            match cur {
-                Expr::Succ(inner) if !inner.is_val() => {
+            // We cannot destructure `cur` by move while it implements Drop, so
+            // we use helper functions that take the Box fields out explicitly.
+            let needs_peel = match &cur {
+                Expr::Succ(inner) if !inner.is_val() => 1,
+                Expr::Pair(a, _) if !a.is_val() => 2,
+                Expr::Pair(_, b) if !b.is_val() => 3,
+                _ => 0,
+            };
+            if needs_peel == 0 { break; }
+
+            // Drain children out of `cur` in place (our iterative Drop helper
+            // does the same), then reassemble what we need.
+            match needs_peel {
+                1 => {
+                    // cur = Succ(inner), inner not val
+                    let inner_box = take_succ_inner(&mut cur);
                     frames.push(Frame::Succ);
-                    cur = *inner;
+                    cur = *inner_box;
                 }
-                Expr::Pair(a, b) if !a.is_val() => {
-                    frames.push(Frame::PairLeft(*b));
-                    cur = *a;
+                2 => {
+                    // cur = Pair(a, b), a not val
+                    let (a_box, b_box) = take_pair(&mut cur);
+                    frames.push(Frame::PairLeft(*b_box));
+                    cur = *a_box;
                 }
-                Expr::Pair(a, b) if !b.is_val() => {
-                    frames.push(Frame::PairRight(*a));
-                    cur = *b;
+                3 => {
+                    // cur = Pair(a, b), a is val, b not val
+                    let (a_box, b_box) = take_pair(&mut cur);
+                    frames.push(Frame::PairRight(*a_box));
+                    cur = *b_box;
                 }
-                _ => break,
+                _ => unreachable!(),
             }
         }
 
@@ -303,9 +455,16 @@ pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
             return Err(KernelError::OutOfGas);
         }
         *gas -= 1;
+        step_count += 1;
         let stepped = step(&cur)?;
         cur = plug(frames, stepped);
         frames = Vec::new();
+
+        // Periodically check that intermediate expressions haven't grown too deep
+        // (e.g. rec unrolling can produce large terms before they reduce).
+        if step_count % 64 == 0 && depth(&cur) > MAX_DEPTH {
+            return Err(KernelError::TooDeep);
+        }
     }
 }
 

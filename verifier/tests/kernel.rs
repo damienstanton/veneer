@@ -175,3 +175,42 @@ proptest! {
         prop_assert!(r.is_ok() || r == Err(KernelError::OutOfGas));
     }
 }
+
+#[test]
+fn check_eq_consumes_gas() {
+    let mut gas = 10; // far less than needed for 2000-deep structural compare
+    assert_eq!(
+        check_eq(&Expr::Nat, &nat(2000), &nat(2000), &mut gas),
+        Err(KernelError::OutOfGas)
+    );
+}
+
+#[test]
+fn too_deep_input_is_an_error_not_an_abort() {
+    let mut e = Expr::Zero;
+    for _ in 0..100_000 {
+        e = Expr::succ(e);
+    }
+    let mut gas = 1_000_000;
+    assert_eq!(eval(&e, &mut gas), Err(KernelError::TooDeep));
+    let mut gas = 1_000_000;
+    assert_eq!(
+        check_eq(&Expr::Nat, &e, &e, &mut gas),
+        Err(KernelError::TooDeep)
+    );
+}
+
+#[test]
+fn alpha_eq_distinguishes_free_from_bound() {
+    let ty = Expr::arrow(Expr::Bool, Expr::Bool);
+    // lambda x.x vs lambda x.y — bound vs free
+    let f = Expr::lam("x", Expr::var("x"));
+    let g = Expr::lam("x", Expr::var("y"));
+    let mut gas = 100;
+    assert!(!check_eq(&ty, &f, &g, &mut gas).unwrap());
+    // shadowing: lambda x.lambda x.x ≡α lambda a.lambda b.b
+    let h1 = Expr::lam("x", Expr::lam("x", Expr::var("x")));
+    let h2 = Expr::lam("a", Expr::lam("b", Expr::var("b")));
+    let mut gas = 100;
+    assert!(check_eq(&Expr::arrow(Expr::Bool, Expr::arrow(Expr::Bool, Expr::Bool)), &h1, &h2, &mut gas).unwrap());
+}
