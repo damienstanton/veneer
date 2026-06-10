@@ -65,10 +65,14 @@ fn cmd_init(root: &Path, link: Option<&str>) -> i32 {
     for host in [".claude/skills/veneer", ".agents/skills/veneer"] {
         let dest = root.join(host);
         if let Some(src) = link {
+            let Ok(src_abs) = std::fs::canonicalize(src) else {
+                eprintln!("error: --link source not found: {src}");
+                return 2;
+            };
             let _ = std::fs::create_dir_all(dest.parent().unwrap());
             if !dest.exists() {
                 #[cfg(unix)]
-                if std::os::unix::fs::symlink(src, &dest).is_err() {
+                if std::os::unix::fs::symlink(&src_abs, &dest).is_err() {
                     eprintln!("error: cannot symlink {host}");
                     return 2;
                 }
@@ -127,7 +131,8 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
     if code == 0 && diff.is_none() && paths.is_empty() {
         // A clean full check records the tree hash for the ship gate.
         if let Err(f) = record_clean_check(root, tree_hash(&read_tree(root))) {
-            return emit(&[f]);
+            eprintln!("error [protocol] {}: {}", f.location.path, f.message);
+            return 1;
         }
     }
     code
@@ -214,10 +219,17 @@ fn main() {
     let root = std::env::current_dir().expect("cwd");
     let code = match args.first().map(String::as_str) {
         Some("init") => {
-            let link = (args.get(1).map(String::as_str) == Some("--link"))
-                .then(|| args.get(2).map(String::as_str))
-                .flatten();
-            cmd_init(&root, link)
+            if args.get(1).map(String::as_str) == Some("--link") {
+                match args.get(2) {
+                    Some(src) => cmd_init(&root, Some(src.as_str())),
+                    None => {
+                        eprintln!("{USAGE}");
+                        2
+                    }
+                }
+            } else {
+                cmd_init(&root, None)
+            }
         }
         Some("check") => cmd_check(&root, &args[1..]),
         Some("state") => cmd_state(&root, &args[1..]),

@@ -89,3 +89,57 @@ fn check_intent_processes_an_intent_file() {
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("pub fn api()"));
 }
+
+#[test]
+fn check_diff_runs_idempotency_via_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("greet.txt"), "hello\nworld\n").unwrap();
+    std::fs::write(
+        dir.path().join("p.patch"),
+        "--- a/greet.txt\n+++ b/greet.txt\n@@ -1,2 +1,2 @@\n hello\n-world\n+veneer\n",
+    )
+    .unwrap();
+    let out = veneer(dir.path(), &["check", "--diff", "p.patch"]);
+    assert_eq!(out.status.code(), Some(0));
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(findings.is_empty());
+    // Garbage patch → protocol finding, exit 1
+    std::fs::write(dir.path().join("bad.patch"), "garbage").unwrap();
+    let out = veneer(dir.path(), &["check", "--diff", "bad.patch"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("protocol"));
+}
+
+#[cfg(unix)]
+#[test]
+fn init_link_symlinks_resolvably_and_missing_value_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    // Missing value → usage error, nothing materialized
+    let out = veneer(dir.path(), &["init", "--link"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!dir.path().join(".claude/skills/veneer").exists());
+    // Relative source → canonicalized, resolvable symlink
+    std::fs::create_dir_all(dir.path().join("skillsrc")).unwrap();
+    std::fs::write(dir.path().join("skillsrc/SKILL.md"), "stub\n").unwrap();
+    let out = veneer(dir.path(), &["init", "--link", "skillsrc"]);
+    assert_eq!(out.status.code(), Some(0));
+    let content = std::fs::read_to_string(dir.path().join(".claude/skills/veneer/SKILL.md"))
+        .expect("symlink must resolve");
+    assert_eq!(content, "stub\n");
+    // Nonexistent source → exit 2
+    let dir2 = tempfile::tempdir().unwrap();
+    assert_eq!(veneer(dir2.path(), &["init", "--link", "nope"]).status.code(), Some(2));
+}
+
+#[test]
+fn stale_gate_refused_via_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    assert_eq!(veneer(dir.path(), &["state", "set", "implement"]).status.code(), Some(0));
+    assert_eq!(veneer(dir.path(), &["state", "set", "verify"]).status.code(), Some(0));
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(0));
+    std::fs::write(dir.path().join("a.rs"), "fn a() { changed(); }\n").unwrap();
+    let out = veneer(dir.path(), &["state", "set", "ship"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("stale"));
+}
