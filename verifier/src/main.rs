@@ -1,4 +1,231 @@
+//! CLI dispatch: thin wrappers over the intent/laws/state modules.
+//! Exit codes: 0 clean (warnings allowed) · 1 error findings · 2 usage error.
+
+use std::path::{Path, PathBuf};
+use veneer::intent::{parse_intent, execute, Outcome};
+use veneer::laws::{load_config, read_tree, run_checks, tree_hash, Finding, Severity};
+use veneer::state::{load, record_clean_check, set_phase, Phase};
+
+const USAGE: &str = "\
+veneer — minimal CTT-grounded agentic harness
+USAGE:
+  veneer init [--link <skill-src-dir>]
+  veneer check [--diff <patch-file>] [--intent <intent.json>] [paths...]
+  veneer state get | set <phase> [--ref k=v ...] | reset
+  veneer mcp
+";
+
+// Embedded skill (kept in sync by include_str! — a build error if files move).
+const SKILL_FILES: &[(&str, &str)] = &[
+    ("SKILL.md", include_str!("../../skill/veneer/SKILL.md")),
+    ("references/laws.md", include_str!("../../skill/veneer/references/laws.md")),
+    ("references/plan.md", include_str!("../../skill/veneer/references/plan.md")),
+    ("references/implement.md", include_str!("../../skill/veneer/references/implement.md")),
+    ("references/verify.md", include_str!("../../skill/veneer/references/verify.md")),
+    ("references/ship.md", include_str!("../../skill/veneer/references/ship.md")),
+];
+
+const DEFAULT_CONFIG: &str = "\
+# veneer configuration — see spec/veneer.md
+loc_soft = 500
+loc_hard = 1000
+
+# Declare sealed modules:
+# [[modules]]
+# path = \"src/core\"
+# public = [\"api.rs\"]
+";
+
+fn emit(findings: &[Finding]) -> i32 {
+    println!("{}", serde_json::to_string(findings).unwrap());
+    for f in findings {
+        let sev = match f.severity { Severity::Error => "error", Severity::Warning => "warning" };
+        let law = serde_json::to_value(&f.law).unwrap();
+        eprintln!(
+            "{sev} [{}] {}: {}{}",
+            law.as_str().unwrap_or("?"),
+            f.location.path,
+            f.message,
+            f.suggested_fix.as_deref().map(|s| format!(" — fix: {s}")).unwrap_or_default()
+        );
+    }
+    if findings.iter().any(|f| f.severity == Severity::Error) { 1 } else { 0 }
+}
+
+fn cmd_init(root: &Path, link: Option<&str>) -> i32 {
+    let cfg_path = root.join(".veneer/config.toml");
+    if !cfg_path.exists() {
+        if std::fs::create_dir_all(root.join(".veneer")).is_err()
+            || std::fs::write(&cfg_path, DEFAULT_CONFIG).is_err()
+        {
+            eprintln!("error: cannot create .veneer/");
+            return 2;
+        }
+    }
+    for host in [".claude/skills/veneer", ".agents/skills/veneer"] {
+        let dest = root.join(host);
+        if let Some(src) = link {
+            let _ = std::fs::create_dir_all(dest.parent().unwrap());
+            if !dest.exists() {
+                #[cfg(unix)]
+                if std::os::unix::fs::symlink(src, &dest).is_err() {
+                    eprintln!("error: cannot symlink {host}");
+                    return 2;
+                }
+            }
+        } else {
+            for (rel_path, contents) in SKILL_FILES {
+                let p = dest.join(rel_path);
+                let _ = std::fs::create_dir_all(p.parent().unwrap());
+                let already_written = std::fs::read_to_string(&p)
+                    .map(|existing| existing == *contents)
+                    .unwrap_or(false);
+                if !already_written && std::fs::write(&p, contents).is_err()
+                {
+                    eprintln!("error: cannot write {}", p.display());
+                    return 2;
+                }
+            }
+        }
+    }
+    eprintln!("veneer initialized (config: .veneer/config.toml, skill: .claude + .agents)");
+    0
+}
+
+fn cmd_check(root: &Path, args: &[String]) -> i32 {
+    let cfg = load_config(root);
+    let mut diff: Option<String> = None;
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--diff" | "--intent" => {
+                let flag = args[i].clone();
+                let Some(file) = args.get(i + 1) else {
+                    eprintln!("{USAGE}");
+                    return 2;
+                };
+                let Ok(contents) = std::fs::read_to_string(file) else {
+                    eprintln!("error: cannot read {file}");
+                    return 2;
+                };
+                if flag == "--diff" {
+                    diff = Some(contents);
+                } else {
+                    return cmd_intent(root, &contents, &cfg);
+                }
+                i += 2;
+            }
+            p => {
+                paths.push(PathBuf::from(p));
+                i += 1;
+            }
+        }
+    }
+    let findings = run_checks(root, &paths, diff.as_deref(), &cfg);
+    let code = emit(&findings);
+    if code == 0 && diff.is_none() && paths.is_empty() {
+        // A clean full check records the tree hash for the ship gate.
+        if let Err(f) = record_clean_check(root, tree_hash(&read_tree(root))) {
+            return emit(&[f]);
+        }
+    }
+    code
+}
+
+fn cmd_intent(root: &Path, contents: &str, cfg: &veneer::laws::Config) -> i32 {
+    match parse_intent(contents) {
+        Err(f) => emit(&[f]),
+        Ok(intent) => match execute(root, intent, cfg) {
+            Outcome::Context(c) => {
+                println!("{c}");
+                0
+            }
+            Outcome::Findings(fs) => emit(&fs),
+            Outcome::Concluded(summary) => {
+                println!("{}", serde_json::json!({ "concluded": summary }));
+                0
+            }
+        },
+    }
+}
+
+fn cmd_state(root: &Path, args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("get") => match load(root) {
+            Ok(s) => {
+                println!("{}", serde_json::to_string(&s).unwrap());
+                eprintln!("phase: {}", s.phase.name());
+                0
+            }
+            Err(f) => emit(&[f]),
+        },
+        Some("reset") => match set_phase(root, Phase::Plan, &[]) {
+            Ok(_) => 0,
+            Err(_) => {
+                // Corrupt state: reset must still work — rewrite the default.
+                let s = veneer::state::State::default();
+                match veneer::state::store(root, &s) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        2
+                    }
+                }
+            }
+        },
+        Some("set") => {
+            let Some(phase) = args.get(1).and_then(|p| Phase::parse(p)) else {
+                eprintln!("{USAGE}");
+                return 2;
+            };
+            let mut refs = Vec::new();
+            let mut i = 2;
+            while i < args.len() {
+                if args[i] == "--ref" {
+                    let Some((k, v)) = args.get(i + 1).and_then(|r| r.split_once('=')) else {
+                        eprintln!("{USAGE}");
+                        return 2;
+                    };
+                    refs.push((k.to_string(), v.to_string()));
+                    i += 2;
+                } else {
+                    eprintln!("{USAGE}");
+                    return 2;
+                }
+            }
+            match set_phase(root, phase, &refs) {
+                Ok(s) => {
+                    println!("{}", serde_json::to_string(&s).unwrap());
+                    0
+                }
+                Err(f) => emit(&[f]),
+            }
+        }
+        _ => {
+            eprintln!("{USAGE}");
+            2
+        }
+    }
+}
+
 fn main() {
-    eprintln!("veneer: not yet implemented");
-    std::process::exit(2);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let root = std::env::current_dir().expect("cwd");
+    let code = match args.first().map(String::as_str) {
+        Some("init") => {
+            let link = (args.get(1).map(String::as_str) == Some("--link"))
+                .then(|| args.get(2).map(String::as_str))
+                .flatten();
+            cmd_init(&root, link)
+        }
+        Some("check") => cmd_check(&root, &args[1..]),
+        Some("state") => cmd_state(&root, &args[1..]),
+        Some("mcp") => veneer::mcp_unavailable(), // replaced in Task 14
+        _ => {
+            eprintln!("{USAGE}");
+            2
+        }
+    };
+    std::process::exit(code);
 }
