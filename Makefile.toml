@@ -1,0 +1,18 @@
+[config]
+default_to_workspace = false
+
+[tasks.build]
+command = "cargo"
+args = ["build", "--release", "--manifest-path", "verifier/Cargo.toml"]
+
+[tasks.test]
+command = "cargo"
+args = ["test", "--manifest-path", "verifier/Cargo.toml"]
+
+[tasks.install]
+command = "cargo"
+args = ["install", "--path", "verifier"]
+
+[tasks.self-check]
+dependencies = ["build"]
+script = "verifier/target/release/veneer check verifier skill spec README.md"
