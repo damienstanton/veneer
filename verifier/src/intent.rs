@@ -1,5 +1,5 @@
-//! The AgentIntent ADT (plan.md interaction protocol): the single typed entry
-//! path shared by the CLI and MCP surfaces.
+//! The AgentIntent ADT (the veneer interaction protocol): the single typed
+//! entry path shared by the CLI and MCP surfaces.
 
 use crate::laws::{loc, run_checks, Config, Finding, Law};
 use crate::state::{set_phase, Phase};

@@ -24,5 +24,4 @@ Then invoke the `veneer` skill from Claude Code or Zed.
     cargo make test        # unit, property, golden, and CLI tests
     cargo make self-check  # the harness obeys its own laws
 
-Contract: `spec/veneer.md` · Formal basis: `spec/basis.md` · Design:
-`docs/superpowers/specs/2026-06-10-veneer-design.md`
+Contract: `spec/veneer.md` · Formal basis: `spec/basis.md`

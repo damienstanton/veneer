@@ -1,8 +1,7 @@
 # veneer Harness Contract
 
 The normative contract between agents and the `veneer` binary. The formal
-foundation is `spec/basis.md`; the design rationale is
-`docs/superpowers/specs/2026-06-10-veneer-design.md`.
+foundation is `spec/basis.md`.
 
 ## Laws
 
