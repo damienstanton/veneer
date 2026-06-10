@@ -124,12 +124,17 @@ pub fn load(root: &Path) -> Result<State, Finding> {
 
 /// Store state with its content hash embedded. Identical state ⇒ identical
 /// bytes ⇒ replayed writes converge.
+///
+/// Crash-atomic: written to a temp file then renamed, so a partial write never
+/// replaces good state.
 pub fn store(root: &Path, s: &State) -> std::io::Result<()> {
     std::fs::create_dir_all(root.join(".veneer"))?;
     let mut v = serde_json::to_value(s).expect("state serialization is infallible");
     let hash = format!("fnv:{:016x}", fnv64(&canonical_bytes(s)));
     v.as_object_mut().unwrap().insert("hash".into(), serde_json::Value::String(hash));
-    std::fs::write(state_path(root), serde_json::to_string_pretty(&v).unwrap() + "\n")
+    let tmp = state_path(root).with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&v).unwrap() + "\n")?;
+    std::fs::rename(&tmp, state_path(root))
 }
 
 /// Record that `veneer check` ran clean against the tree with this hash.
@@ -146,6 +151,12 @@ pub fn record_clean_check(root: &Path, hash: u64) -> Result<(), Finding> {
 pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Result<State, Finding> {
     let mut s = load(root)?;
     transition(s.phase, requested)?;
+    if s.phase == Phase::Ship && requested == Phase::Plan {
+        // A new cycle requires a fresh clean check; stale validity-by-hash-match
+        // across cycles is not accepted.
+        s.last_clean_check = None;
+    }
+    // Ship→Ship is an idempotent no-op and intentionally not re-gated.
     if requested == Phase::Ship && s.phase != Phase::Ship {
         let current = tree_hash(&read_tree(root));
         match s.last_clean_check {
