@@ -1,4 +1,4 @@
-use veneer::kernel::{check_eq, eval, nat, Expr, KernelError};
+use veneer::kernel::{bytes_type, check_eq, eval, from_bytes, nat, Expr, KernelError};
 
 #[test]
 fn values_evaluate_to_themselves() {
@@ -126,4 +126,52 @@ fn non_type_in_type_position_is_stuck() {
         check_eq(&Expr::True, &Expr::True, &Expr::True, &mut gas),
         Err(KernelError::Stuck(_))
     ));
+}
+
+use proptest::prelude::*;
+
+#[test]
+fn byte_encoding_roundtrips_through_check_eq() {
+    let h1: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 255];
+    let h2: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 254];
+    let ty = bytes_type(8);
+    let mut gas = 100_000;
+    assert!(check_eq(&ty, &from_bytes(&h1), &from_bytes(&h1), &mut gas).unwrap());
+    let mut gas = 100_000;
+    assert!(!check_eq(&ty, &from_bytes(&h1), &from_bytes(&h2), &mut gas).unwrap());
+}
+
+proptest! {
+    #[test]
+    fn check_eq_is_reflexive_on_bytes(bs in proptest::collection::vec(any::<u8>(), 1..16)) {
+        let ty = bytes_type(bs.len());
+        let mut gas = 1_000_000;
+        prop_assert!(check_eq(&ty, &from_bytes(&bs), &from_bytes(&bs), &mut gas).unwrap());
+    }
+
+    #[test]
+    fn check_eq_is_symmetric_on_bytes(
+        len in 1usize..8,
+        a in proptest::collection::vec(any::<u8>(), 1..8),
+        b in proptest::collection::vec(any::<u8>(), 1..8),
+    ) {
+        // Truncate/extend to exactly `len` bytes to avoid mass rejection.
+        let a: Vec<u8> = a.into_iter().cycle().take(len).collect();
+        let b: Vec<u8> = b.into_iter().cycle().take(len).collect();
+        let ty = bytes_type(len);
+        let mut g1 = 1_000_000;
+        let mut g2 = 1_000_000;
+        let ab = check_eq(&ty, &from_bytes(&a), &from_bytes(&b), &mut g1).unwrap();
+        let ba = check_eq(&ty, &from_bytes(&b), &from_bytes(&a), &mut g2).unwrap();
+        prop_assert_eq!(ab, ba);
+    }
+
+    #[test]
+    fn eval_is_total_under_gas(n in 0u64..500) {
+        // Primitive recursion terminates; gas makes even adversarial terms total.
+        let add = Expr::rec(nat(n), "p", "acc", Expr::succ(Expr::var("acc")), nat(n));
+        let mut gas = 10_000;
+        let r = eval(&add, &mut gas);
+        prop_assert!(r.is_ok() || r == Err(KernelError::OutOfGas));
+    }
 }

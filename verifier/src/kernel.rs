@@ -138,14 +138,8 @@ fn step(e: &Expr) -> Result<Expr, KernelError> {
             p_ if p_.is_val() => Err(KernelError::Stuck("project non-pair".into())),
             _ => Ok(Expr::snd(step(p)?)),
         },
-        Expr::Succ(n) => Ok(Expr::succ(step(n)?)),
-        Expr::Pair(a, b) => {
-            if !a.is_val() {
-                Ok(Expr::pair(step(a)?, (**b).clone()))
-            } else {
-                Ok(Expr::pair((**a).clone(), step(b)?))
-            }
-        }
+        // Succ/Pair stepping is handled in eval's context loop to avoid deep recursion.
+        Expr::Succ(_) | Expr::Pair(..) => Err(KernelError::Stuck("step on canonical form".into())),
         Expr::Rec { base, pred, acc, step: st, target } => match &**target {
             Expr::Zero => Ok((**base).clone()),
             Expr::Succ(n) => {
@@ -241,17 +235,98 @@ pub fn check_eq(ty: &Expr, m1: &Expr, m2: &Expr, gas: &mut u64) -> Result<bool, 
     }
 }
 
+/// Evaluation context frames for iterative handling of Succ/Pair nesting.
+/// Avoids O(n²) stack depth when evaluating inside deep Succ/Pair chains.
+#[derive(Debug)]
+enum Frame {
+    Succ,
+    PairLeft(Expr),   // waiting for left; right already known
+    PairRight(Expr),  // left is a value; waiting for right
+}
+
+fn plug(frames: Vec<Frame>, mut v: Expr) -> Expr {
+    for frame in frames.into_iter().rev() {
+        v = match frame {
+            Frame::Succ => Expr::succ(v),
+            Frame::PairLeft(right) => Expr::pair(v, right),
+            Frame::PairRight(left) => Expr::pair(left, v),
+        };
+    }
+    v
+}
+
 /// Big-step evaluation E ⇓ E∘: iterate ↦ until canonical, bounded by gas.
+/// Uses an explicit frame stack for Succ/Pair to avoid deep call-stack recursion.
 pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
     let mut cur = e.clone();
+    let mut frames: Vec<Frame> = Vec::new();
+
     loop {
-        if cur.is_val() {
-            return Ok(cur);
+        // Peel off Succ/Pair wrappers into frames until we reach the active redex.
+        loop {
+            match cur {
+                Expr::Succ(inner) if !inner.is_val() => {
+                    frames.push(Frame::Succ);
+                    cur = *inner;
+                }
+                Expr::Pair(a, b) if !a.is_val() => {
+                    frames.push(Frame::PairLeft(*b));
+                    cur = *a;
+                }
+                Expr::Pair(a, b) if !b.is_val() => {
+                    frames.push(Frame::PairRight(*a));
+                    cur = *b;
+                }
+                _ => break,
+            }
         }
+
+        if cur.is_val() {
+            // Rewrap with frames and continue if there are more frames.
+            if frames.is_empty() {
+                return Ok(cur);
+            }
+            let frame = frames.pop().unwrap();
+            cur = match frame {
+                Frame::Succ => Expr::succ(cur),
+                Frame::PairLeft(right) => {
+                    // Left is now a val; push PairRight frame, evaluate right.
+                    frames.push(Frame::PairRight(cur));
+                    right
+                }
+                Frame::PairRight(left) => Expr::pair(left, cur),
+            };
+            continue;
+        }
+
         if *gas == 0 {
             return Err(KernelError::OutOfGas);
         }
         *gas -= 1;
-        cur = step(&cur)?;
+        let stepped = step(&cur)?;
+        cur = plug(frames, stepped);
+        frames = Vec::new();
     }
+}
+
+/// Encode bytes as a right-nested pair of Nats: (b0, (b1, ... bn-1)).
+/// Used to lift content hashes into canonical forms for check_eq.
+pub fn from_bytes(bs: &[u8]) -> Expr {
+    assert!(!bs.is_empty(), "from_bytes requires at least one byte");
+    let mut it = bs.iter().rev();
+    let mut e = nat(u64::from(*it.next().unwrap()));
+    for b in it {
+        e = Expr::pair(nat(u64::from(*b)), e);
+    }
+    e
+}
+
+/// The type of `from_bytes` output for a given length: Nat × (Nat × ... Nat).
+pub fn bytes_type(len: usize) -> Expr {
+    assert!(len > 0, "bytes_type requires len > 0");
+    let mut ty = Expr::Nat;
+    for _ in 1..len {
+        ty = Expr::prod(Expr::Nat, ty);
+    }
+    ty
 }
