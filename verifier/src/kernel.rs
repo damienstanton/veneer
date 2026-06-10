@@ -474,20 +474,23 @@ pub fn eval(e: &Expr, gas: &mut u64) -> Result<Expr, KernelError> {
 }
 
 /// Encode bytes as a right-nested pair of Nats: (b0, (b1, ... bn-1)).
-/// Used to lift content hashes into canonical forms for check_eq.
+/// Total: the empty slice encodes as Zero (a degenerate but valid canonical
+/// form at type Nat, matching bytes_type(0) = Nat). Used to lift content
+/// hashes into canonical forms for check_eq.
 pub fn from_bytes(bs: &[u8]) -> Expr {
-    assert!(!bs.is_empty(), "from_bytes requires at least one byte");
-    let mut it = bs.iter().rev();
-    let mut e = nat(u64::from(*it.next().unwrap()));
-    for b in it {
+    let Some((last, rest)) = bs.split_last() else {
+        return Expr::Zero;
+    };
+    let mut e = nat(u64::from(*last));
+    for b in rest.iter().rev() {
         e = Expr::pair(nat(u64::from(*b)), e);
     }
     e
 }
 
 /// The type of `from_bytes` output for a given length: Nat × (Nat × ... Nat).
+/// Total: len 0 yields Nat (the type of the degenerate empty encoding).
 pub fn bytes_type(len: usize) -> Expr {
-    assert!(len > 0, "bytes_type requires len > 0");
     let mut ty = Expr::Nat;
     for _ in 1..len {
         ty = Expr::prod(Expr::Nat, ty);

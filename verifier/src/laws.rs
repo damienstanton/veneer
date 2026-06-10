@@ -85,23 +85,34 @@ impl Default for Config {
     }
 }
 
-/// Load `.veneer/config.toml` under `root`; absent or malformed → defaults.
-/// (A malformed config is reported as a Protocol finding by the CLI layer.)
-pub fn load_config(root: &Path) -> Config {
+/// Load `.veneer/config.toml` under `root`. Absent file → defaults.
+/// Malformed TOML → a Protocol finding (silent fallback would undermine
+/// the determinism contract).
+pub fn load_config(root: &Path) -> Result<Config, Finding> {
     let p = root.join(".veneer/config.toml");
-    std::fs::read_to_string(p)
-        .ok()
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+    let Ok(raw) = std::fs::read_to_string(p) else {
+        return Ok(Config::default());
+    };
+    toml::from_str(&raw).map_err(|e| {
+        Finding::error(
+            Law::Protocol,
+            ".veneer/config.toml",
+            None,
+            &format!("malformed config: {e}"),
+            Some("fix the TOML or delete the file to use defaults"),
+        )
+    })
 }
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 const SKIP_DIRS: &[&str] = &[".git", ".veneer", "target", "node_modules", ".claude", ".agents"];
-/// Generated lockfiles are not first-principles modules; skip them from budget
-/// checks. (Cargo.lock, package-lock.json, yarn.lock, etc.)
+/// Generated lockfiles are not first-principles modules; skip them from the
+/// walk. Suffix match covers Cargo.lock, yarn.lock, Gemfile.lock, etc.; the
+/// exact names cover lockfiles that don't end in ".lock".
 const SKIP_FILE_SUFFIXES: &[&str] = &[".lock"];
+const SKIP_FILE_NAMES: &[&str] = &["package-lock.json", "pnpm-lock.yaml"];
 
 /// All regular files under root, sorted, skipping VCS/build/harness dirs and
 /// generated lockfiles. Deterministic order ⇒ deterministic findings and tree
@@ -120,6 +131,7 @@ pub fn walk_files(root: &Path) -> Vec<PathBuf> {
                 stack.push(p);
             } else if ft.map_or(false, |t| t.is_file())
                 && !SKIP_FILE_SUFFIXES.iter().any(|s| name.ends_with(s))
+                && !SKIP_FILE_NAMES.contains(&name.as_str())
             {
                 out.push(p);
             }
@@ -243,6 +255,9 @@ pub fn parse_patch(s: &str) -> Result<Patch, String> {
             }
             if hunks.is_empty() {
                 return Err(format!("no hunks for {path}"));
+            }
+            if is_delete && hunks.iter().any(|h| h.lines.iter().any(|l| matches!(l, DiffLine::Add(_)))) {
+                return Err(format!("{path}: deletion patch must not contain added lines"));
             }
             files.push(FilePatch { path, hunks, is_delete });
         }

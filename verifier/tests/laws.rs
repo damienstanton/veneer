@@ -41,7 +41,7 @@ fn config_loads_from_veneer_dir() {
         "loc_soft = 300\nloc_hard = 800\n\n[[modules]]\npath = \"src/core\"\npublic = [\"api.rs\"]\n",
     )
     .unwrap();
-    let c = load_config(dir.path());
+    let c = load_config(dir.path()).unwrap();
     assert_eq!(c.loc_soft, 300);
     assert_eq!(c.loc_hard, 800);
     assert_eq!(c.modules[0].path, "src/core");
@@ -49,12 +49,19 @@ fn config_loads_from_veneer_dir() {
 }
 
 #[test]
-fn missing_or_corrupt_config_falls_back_to_default() {
+fn missing_config_falls_back_to_default() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(load_config(dir.path()).loc_soft, 500);
+    assert_eq!(load_config(dir.path()).unwrap().loc_soft, 500);
+}
+
+#[test]
+fn malformed_config_is_a_protocol_finding() {
+    let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();
     std::fs::write(dir.path().join(".veneer/config.toml"), "not [ valid").unwrap();
-    assert_eq!(load_config(dir.path()).loc_soft, 500);
+    let f = load_config(dir.path()).unwrap_err();
+    assert_eq!(f.law, Law::Protocol);
+    assert!(f.message.contains("malformed config"));
 }
 
 use std::path::PathBuf;
@@ -386,9 +393,16 @@ fn path_containing_dev_null_is_not_a_deletion() {
 }
 
 #[test]
+fn deletion_patch_with_additions_is_rejected() {
+    let patch = "--- a/gone.txt\n+++ /dev/null\n@@ -1,1 +1,1 @@\n-alpha\n+beta\n";
+    assert!(parse_patch(patch).is_err());
+}
+
+#[test]
 fn lockfiles_are_not_modules() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "deps.lock", &"line\n".repeat(1200));
+    write(dir.path(), "package-lock.json", &"line\n".repeat(1200));
     write(dir.path(), "code.rs", "fn main() {}\n");
     let files = walk_files(dir.path());
     assert_eq!(files.len(), 1, "lockfile must be excluded: {files:?}");

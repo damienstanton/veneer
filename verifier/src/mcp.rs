@@ -46,7 +46,14 @@ impl VeneerServer {
 
     #[tool(description = "Run the veneer laws (module budget, sealing, diff idempotency). Returns a JSON array of findings; empty means clean.")]
     fn veneer_check(&self, args: Parameters<CheckArgs>) -> CallToolResult {
-        let cfg = load_config(&self.root);
+        let cfg = match load_config(&self.root) {
+            Ok(c) => c,
+            Err(f) => {
+                return CallToolResult::success(vec![Content::text(
+                    serde_json::to_string(&[f]).unwrap(),
+                )])
+            }
+        };
         let paths: Vec<PathBuf> = args.0.paths.iter().map(PathBuf::from).collect();
         let findings = run_checks(&self.root, &paths, args.0.diff.as_deref(), &cfg);
         CallToolResult::success(vec![Content::text(

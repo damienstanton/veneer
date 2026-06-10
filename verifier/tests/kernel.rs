@@ -216,6 +216,12 @@ fn alpha_eq_distinguishes_free_from_bound() {
 }
 
 #[test]
+fn empty_byte_encoding_is_total_not_a_panic() {
+    let mut gas = 100;
+    assert!(check_eq(&bytes_type(0), &from_bytes(&[]), &from_bytes(&[]), &mut gas).unwrap());
+}
+
+#[test]
 fn rec_depth_amplification_is_bounded_not_an_abort() {
     // rec(0; p, acc. succ^3000(acc))(succ^3000(0)) — passes the entry depth
     // guard, then each unrolling step amplifies depth; must error, not abort.

@@ -76,6 +76,12 @@ fn cmd_init(root: &Path, link: Option<&str>) -> i32 {
                     eprintln!("error: cannot symlink {host}");
                     return 2;
                 }
+                #[cfg(not(unix))]
+                {
+                    let _ = &src_abs;
+                    eprintln!("error: --link requires a unix platform (symlinks); run `veneer init` without --link");
+                    return 2;
+                }
             }
         } else {
             for (rel_path, contents) in SKILL_FILES {
@@ -97,7 +103,10 @@ fn cmd_init(root: &Path, link: Option<&str>) -> i32 {
 }
 
 fn cmd_check(root: &Path, args: &[String]) -> i32 {
-    let cfg = load_config(root);
+    let cfg = match load_config(root) {
+        Ok(c) => c,
+        Err(f) => return emit(&[f]),
+    };
     let mut diff: Option<String> = None;
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut i = 0;

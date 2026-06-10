@@ -187,3 +187,13 @@ fn mcp_lists_check_and_state_tools() {
     assert!(text.contains("veneer_check"), "missing veneer_check in: {text}");
     assert!(text.contains("veneer_state"), "missing veneer_state in: {text}");
 }
+
+#[test]
+fn malformed_config_fails_check_via_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/config.toml"), "loc_soft = \"oops").unwrap();
+    let out = veneer(dir.path(), &["check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("malformed config"));
+}
