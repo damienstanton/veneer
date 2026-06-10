@@ -384,3 +384,14 @@ fn path_containing_dev_null_is_not_a_deletion() {
     let t1 = apply_patch(&t0, &parse_patch(patch).unwrap()).unwrap();
     assert_eq!(t1["src/dev/null_handler.rs"], "new\n");
 }
+
+#[test]
+fn lockfiles_are_not_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "deps.lock", &"line\n".repeat(1200));
+    write(dir.path(), "code.rs", "fn main() {}\n");
+    let files = walk_files(dir.path());
+    assert_eq!(files.len(), 1, "lockfile must be excluded: {files:?}");
+    let cfg = Config::default();
+    assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
+}

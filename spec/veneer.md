@@ -62,3 +62,5 @@ hash from a prior cycle cannot satisfy the ship gate of the next cycle; every
 new cycle must earn a fresh clean check. Writes are crash-atomic: the new state
 is written to a temporary file and renamed into place, so a partial write never
 corrupts the existing state.
+
+Note: the walker skips `.lock` files (generated artifacts), so lockfile-only edits neither count as modules nor stale the ship gate; their source manifests do.
