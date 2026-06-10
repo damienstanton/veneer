@@ -102,6 +102,8 @@ const SKIP_DIRS: &[&str] = &[".git", ".veneer", "target", "node_modules", ".clau
 
 /// All regular files under root, sorted, skipping VCS/build/harness dirs.
 /// Deterministic order ⇒ deterministic findings and tree hashes.
+/// Symlinks are not followed: symlinked directories and symlinked files are
+/// both skipped, preventing cycles caused by symlinks to ancestor directories.
 pub fn walk_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -110,11 +112,10 @@ pub fn walk_files(root: &Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             let p = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if p.is_dir() {
-                if !SKIP_DIRS.contains(&name.as_str()) {
-                    stack.push(p);
-                }
-            } else if p.is_file() {
+            let ft = entry.file_type().ok();
+            if ft.map_or(false, |t| t.is_dir()) && !SKIP_DIRS.contains(&name.as_str()) {
+                stack.push(p);
+            } else if ft.map_or(false, |t| t.is_file()) {
                 out.push(p);
             }
         }
@@ -179,6 +180,7 @@ pub struct Hunk {
 pub struct FilePatch {
     pub path: String,
     pub hunks: Vec<Hunk>,
+    pub is_delete: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,12 +198,19 @@ pub fn parse_patch(s: &str) -> Result<Patch, String> {
     let mut files: Vec<FilePatch> = Vec::new();
     let mut lines = s.lines().peekable();
     while let Some(line) = lines.next() {
-        if let Some(_old) = line.strip_prefix("--- ") {
-            let new = lines
+        if let Some(old_raw) = line.strip_prefix("--- ") {
+            let new_raw = lines
                 .next()
                 .and_then(|l| l.strip_prefix("+++ "))
                 .ok_or("expected +++ after ---")?;
-            let path = strip_prefix_ab(new);
+            let new_stripped = strip_prefix_ab(new_raw.trim());
+            // Detect deletion: +++ /dev/null (with or without leading a/b/)
+            let is_delete = new_stripped.contains("dev/null");
+            let path = if is_delete {
+                strip_prefix_ab(old_raw.trim())
+            } else {
+                new_stripped
+            };
             let mut hunks = Vec::new();
             while let Some(h) = lines.peek().and_then(|l| l.strip_prefix("@@ ")) {
                 let header = h.split(" @@").next().ok_or("malformed hunk header")?;
@@ -230,7 +239,7 @@ pub fn parse_patch(s: &str) -> Result<Patch, String> {
             if hunks.is_empty() {
                 return Err(format!("no hunks for {path}"));
             }
-            files.push(FilePatch { path, hunks });
+            files.push(FilePatch { path, hunks, is_delete });
         }
     }
     if files.is_empty() {
@@ -241,6 +250,11 @@ pub fn parse_patch(s: &str) -> Result<Patch, String> {
 
 /// Apply a patch to an in-memory tree (path → contents). Pure: returns a new
 /// tree. Strict context matching; any mismatch is a clean Err.
+///
+/// The applier normalizes output to end with a trailing newline; the
+/// `\\ No newline at end of file` marker is accepted but not preserved. Within
+/// check_idempotency both applications share this normalization, so verdicts
+/// are unaffected.
 pub fn apply_patch(
     tree: &BTreeMap<String, String>,
     patch: &Patch,
@@ -279,12 +293,18 @@ pub fn apply_patch(
                 }
             }
         }
-        new_lines.extend_from_slice(&old[cursor..]);
-        let mut contents = new_lines.join("\n");
-        if !contents.is_empty() {
-            contents.push('\n');
+        if fp.is_delete {
+            // Deletion verified above via the cursor loop (Del lines matched);
+            // remove the file from the tree instead of inserting new content.
+            out.remove(&fp.path);
+        } else {
+            new_lines.extend_from_slice(&old[cursor..]);
+            let mut contents = new_lines.join("\n");
+            if !contents.is_empty() {
+                contents.push('\n');
+            }
+            out.insert(fp.path.clone(), contents);
         }
-        out.insert(fp.path.clone(), contents);
     }
     Ok(out)
 }
@@ -357,7 +377,7 @@ pub fn check_idempotency(tree0: &BTreeMap<String, String>, patch_text: &str) -> 
     let t2 = apply_patch(&t1, &patch).unwrap_or_else(|_| t1.clone());
     let h1 = tree_hash(&t1).to_be_bytes();
     let h2 = tree_hash(&t2).to_be_bytes();
-    let mut gas = 1_000_000;
+    let mut gas = 1_000_000; // ~100x the worst case for two 8-byte encodings
     let equal = kernel::check_eq(
         &kernel::bytes_type(8),
         &kernel::from_bytes(&h1),
@@ -399,9 +419,10 @@ pub fn check_sealing(root: &Path, files: &[PathBuf], cfg: &Config) -> Vec<Findin
             .collect();
         for f in files.iter().filter(|f| !f.starts_with(&mod_dir)) {
             let Ok(text) = std::fs::read_to_string(f) else { continue };
+            let lines: Vec<&str> = text.lines().collect();
             for stem in &internal {
                 let needle = format!("{dir_name}/{stem}");
-                if let Some(idx) = text.lines().position(|l| l.contains(&needle)) {
+                if let Some(idx) = lines.iter().position(|l| l.contains(&needle)) {
                     findings.push(Finding::error(
                         Law::ModuleSealing,
                         &rel(root, f),

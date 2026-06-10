@@ -227,6 +227,88 @@ fn unparseable_or_inapplicable_patch_is_a_protocol_finding() {
     assert_eq!(findings[0].law, Law::Protocol);
 }
 
+#[cfg(unix)]
+#[test]
+fn walker_does_not_follow_symlink_cycles() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/a.rs", "x");
+    std::os::unix::fs::symlink(dir.path(), dir.path().join("src/loop")).unwrap();
+    let files = walk_files(dir.path());
+    assert_eq!(files.len(), 1, "symlinked dir must not be walked: {files:?}");
+}
+
+#[test]
+fn deletion_patch_removes_file() {
+    let patch = "\
+--- a/gone.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-alpha
+-beta
+";
+    let t0 = tree(&[("gone.txt", "alpha\nbeta\n")]);
+    let p = parse_patch(patch).unwrap();
+    let t1 = apply_patch(&t0, &p).unwrap();
+    assert!(!t1.contains_key("gone.txt"));
+}
+
+#[test]
+fn deletion_patch_is_idempotent() {
+    // Second apply fails cleanly (file gone) → detectable no-op → idempotent.
+    let t0 = tree(&[("gone.txt", "alpha\nbeta\n")]);
+    let patch = "--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-alpha\n-beta\n";
+    assert!(check_idempotency(&t0, patch).is_empty());
+}
+
+#[test]
+fn deletion_of_missing_file_fails_cleanly() {
+    let patch = "--- a/gone.txt\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-alpha\n";
+    assert!(apply_patch(&tree(&[]), &parse_patch(patch).unwrap()).is_err());
+}
+
+#[test]
+fn multi_hunk_patch_applies_in_order() {
+    let t0 = tree(&[("f.txt", "a\nb\nc\nd\ne\nf\n")]);
+    let patch = "\
+--- a/f.txt
++++ b/f.txt
+@@ -1,2 +1,2 @@
+ a
+-b
++B
+@@ -5,2 +5,2 @@
+ e
+-f
++F
+";
+    let t1 = apply_patch(&t0, &parse_patch(patch).unwrap()).unwrap();
+    assert_eq!(t1["f.txt"], "a\nB\nc\nd\ne\nF\n");
+}
+
+#[test]
+fn out_of_order_hunks_are_rejected() {
+    let t0 = tree(&[("f.txt", "a\nb\nc\nd\ne\nf\n")]);
+    let patch = "\
+--- a/f.txt
++++ b/f.txt
+@@ -5,1 +5,1 @@
+-e
++E
+@@ -1,1 +1,1 @@
+-a
++A
+";
+    assert!(apply_patch(&t0, &parse_patch(patch).unwrap()).is_err());
+}
+
+#[test]
+fn no_comma_hunk_header_parses() {
+    let t0 = tree(&[("f.txt", "a\nb\nc\n")]);
+    let patch = "--- a/f.txt\n+++ b/f.txt\n@@ -2 +2 @@\n-b\n+B\n";
+    let t1 = apply_patch(&t0, &parse_patch(patch).unwrap()).unwrap();
+    assert_eq!(t1["f.txt"], "a\nB\nc\n");
+}
+
 use veneer::laws::{check_sealing, run_checks, ModuleDecl};
 
 fn sealed_cfg() -> Config {
