@@ -145,6 +145,28 @@ fn stale_gate_refused_via_cli() {
 }
 
 #[test]
+fn mcp_tools_call_invalid_action_returns_protocol_finding() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"bogus"}}}}}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(r#"\"law\":\"protocol\""#) || text.contains(r#""law":"protocol""#),
+        "expected protocol finding in: {text}");
+}
+
+#[test]
 fn mcp_lists_check_and_state_tools() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
