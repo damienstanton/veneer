@@ -9,7 +9,11 @@ foundation is `spec/basis.md`.
    interfaces, explicit effects; errors are data; equality is structural.
 2. **First-principles modules** — every module comprehensible from signature
    + sources alone. Proxy: warn above `loc_soft` (500), error above
-   `loc_hard` (1000); configured in `.veneer/config.toml`.
+   `loc_hard` (1000); configured in `.veneer/config.toml`. Entries in
+   `loc_exclude` are exempt from the budget check only (extension entries
+   like `".json"` match by suffix; all others are root-relative path
+   prefixes like `"docs/"`); excluded files still participate in sealing,
+   idempotency, and the tree hash.
 3. **Total boundaries** — sealed modules (declared in config `[[modules]]`,
    `path` + `public` surface); idempotent operations.
 

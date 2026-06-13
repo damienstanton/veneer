@@ -30,6 +30,9 @@ const DEFAULT_CONFIG: &str = "\
 loc_soft = 500
 loc_hard = 1000
 
+# Exclude file types and directories from the LoC budget check:
+# loc_exclude = [\".json\", \".yaml\", \"docs/\"]
+
 # Declare sealed modules:
 # [[modules]]
 # path = \"src/core\"

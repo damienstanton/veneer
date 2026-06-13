@@ -27,6 +27,8 @@ fn init_materializes_harness_idempotently() {
     let before = std::fs::read_to_string(dir.path().join(".veneer/config.toml")).unwrap();
     assert_eq!(veneer(dir.path(), &["init"]).status.code(), Some(0));
     assert_eq!(std::fs::read_to_string(dir.path().join(".veneer/config.toml")).unwrap(), before);
+    let cfg = std::fs::read_to_string(dir.path().join(".veneer/config.toml")).unwrap();
+    assert!(cfg.contains("loc_exclude"), "default config must document loc_exclude");
 }
 
 #[test]
