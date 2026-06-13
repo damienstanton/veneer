@@ -55,6 +55,20 @@ fn missing_config_falls_back_to_default() {
 }
 
 #[test]
+fn config_parses_loc_exclude() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    std::fs::write(
+        dir.path().join(".veneer/config.toml"),
+        "loc_exclude = [\".json\", \"docs/\"]\n",
+    )
+    .unwrap();
+    let c = load_config(dir.path()).unwrap();
+    assert_eq!(c.loc_exclude, vec![".json".to_string(), "docs/".to_string()]);
+    assert!(Config::default().loc_exclude.is_empty());
+}
+
+#[test]
 fn malformed_config_is_a_protocol_finding() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();
