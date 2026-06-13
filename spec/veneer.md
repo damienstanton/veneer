@@ -9,7 +9,11 @@ foundation is `spec/basis.md`.
    interfaces, explicit effects; errors are data; equality is structural.
 2. **First-principles modules** — every module comprehensible from signature
    + sources alone. Proxy: warn above `loc_soft` (500), error above
-   `loc_hard` (1000); configured in `.veneer/config.toml`.
+   `loc_hard` (1000); configured in `.veneer/config.toml`. Entries in
+   `loc_exclude` are exempt from the budget check only (extension entries
+   like `".json"` match by suffix; all others are root-relative path
+   prefixes like `"docs/"`); excluded files still participate in sealing,
+   idempotency, and the tree hash.
 3. **Total boundaries** — sealed modules (declared in config `[[modules]]`,
    `path` + `public` surface); idempotent operations.
 
@@ -17,8 +21,8 @@ foundation is `spec/basis.md`.
 
 `plan → implement → verify → ship`, `verify → implement` on findings,
 `ship → plan` for the next cycle. Same-phase transitions are no-op successes.
-`set ship` is gated: the recorded clean-check tree hash must match the
-current tree.
+`set ship` is gated: the recorded clean-check witness must match the current
+one (see State file — the witness covers both the tree and the config).
 
 ## Finding schema (finding trace)
 
@@ -32,17 +36,25 @@ JSON array on stdout; human rendering on stderr.
       "suggested_fix": string | null
     }
 
+In compact output (`--compact`, and always over MCP) `suggested_fix` is
+omitted; per-law fix guidance lives in the skill.
+
 ## Binary surface
 
     veneer init [--link <skill-src-dir>]   # config + skill into .claude/ and .agents/
-    veneer check [--diff <file>] [--intent <file>] [paths...]
+    veneer check [--compact] [--diff <file>] [--intent <file>] [paths...]
     veneer state get|reset|set <phase> [--ref k=v ...]
     veneer mcp                              # veneer_check / veneer_state over stdio
 
 `--link <skill-src-dir>` creates a symlink from `.claude/skills/veneer` (and
 `.agents/skills/veneer`) to the given source directory; without `--link` the
-skill files are written verbatim. Exit codes: 0 clean (warnings permitted) ·
-1 error findings · 2 usage error.
+single skill file is written verbatim. Exit codes: 0 clean (warnings
+permitted) · 1 error findings · 2 usage error.
+
+`--compact` emits the findings JSON on stdout only (no stderr render) and
+omits `suggested_fix` — the token-lean trace for agent consumption. MCP
+findings are always compact. State responses (CLI and MCP) carry `phase` and
+`refs` only; gate internals stay in the state file.
 
 ## Intent ADT
 
@@ -63,3 +75,13 @@ is written to a temporary file and renamed into place, so a partial write never
 corrupts the existing state.
 
 Note: the walker skips `.lock` files (generated artifacts), so lockfile-only edits neither count as modules nor stale the ship gate; their source manifests do.
+
+`last_clean_check` stores the clean-check witness: an FNV-1a hash over the
+raw config bytes and the tree hash. Editing `.veneer/config.toml` therefore
+stales a recorded clean check, exactly like editing the tree — a verdict
+earned under different rules does not transfer. A full `veneer check` with
+no paths and no diff short-circuits when the current witness matches the
+recorded one: the deterministic verdict is already known, so the laws are
+not re-run and `[]` is emitted. A warning-only run records the witness too
+(warnings are shippable), so a re-check of an unchanged tree reports `[]`;
+warnings reappear on the next tree or config change.

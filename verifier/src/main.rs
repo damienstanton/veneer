@@ -3,14 +3,14 @@
 
 use std::path::{Path, PathBuf};
 use veneer::intent::{parse_intent, execute, Outcome};
-use veneer::laws::{load_config, read_tree, run_checks, tree_hash, Finding, Severity};
+use veneer::laws::{clean_hash, findings_json_compact, load_config, run_checks, Finding, Severity};
 use veneer::state::{load, record_clean_check, set_phase, Phase};
 
 const USAGE: &str = "\
 veneer — minimal CTT-grounded agentic harness
 USAGE:
   veneer init [--link <skill-src-dir>]
-  veneer check [--diff <patch-file>] [--intent <intent.json>] [paths...]
+  veneer check [--compact] [--diff <patch-file>] [--intent <intent.json>] [paths...]
   veneer state get | set <phase> [--ref k=v ...] | reset
   veneer mcp
 ";
@@ -18,17 +18,15 @@ USAGE:
 // Embedded skill (kept in sync by include_str! — a build error if files move).
 const SKILL_FILES: &[(&str, &str)] = &[
     ("SKILL.md", include_str!("../../skill/veneer/SKILL.md")),
-    ("references/laws.md", include_str!("../../skill/veneer/references/laws.md")),
-    ("references/plan.md", include_str!("../../skill/veneer/references/plan.md")),
-    ("references/implement.md", include_str!("../../skill/veneer/references/implement.md")),
-    ("references/verify.md", include_str!("../../skill/veneer/references/verify.md")),
-    ("references/ship.md", include_str!("../../skill/veneer/references/ship.md")),
 ];
 
 const DEFAULT_CONFIG: &str = "\
 # veneer configuration — see spec/veneer.md
 loc_soft = 500
 loc_hard = 1000
+
+# Exclude file types and directories from the LoC budget check:
+# loc_exclude = [\".json\", \".yaml\", \"docs/\"]
 
 # Declare sealed modules:
 # [[modules]]
@@ -49,6 +47,11 @@ fn emit(findings: &[Finding]) -> i32 {
             f.suggested_fix.as_deref().map(|s| format!(" — fix: {s}")).unwrap_or_default()
         );
     }
+    if findings.iter().any(|f| f.severity == Severity::Error) { 1 } else { 0 }
+}
+
+fn emit_compact(findings: &[Finding]) -> i32 {
+    println!("{}", findings_json_compact(findings));
     if findings.iter().any(|f| f.severity == Severity::Error) { 1 } else { 0 }
 }
 
@@ -103,15 +106,17 @@ fn cmd_init(root: &Path, link: Option<&str>) -> i32 {
 }
 
 fn cmd_check(root: &Path, args: &[String]) -> i32 {
-    let cfg = match load_config(root) {
-        Ok(c) => c,
-        Err(f) => return emit(&[f]),
-    };
     let mut diff: Option<String> = None;
+    let mut intent: Option<String> = None;
+    let mut compact = false;
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--compact" => {
+                compact = true;
+                i += 1;
+            }
             "--diff" | "--intent" => {
                 let flag = args[i].clone();
                 let Some(file) = args.get(i + 1) else {
@@ -125,7 +130,7 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
                 if flag == "--diff" {
                     diff = Some(contents);
                 } else {
-                    return cmd_intent(root, &contents, &cfg);
+                    intent = Some(contents);
                 }
                 i += 2;
             }
@@ -135,11 +140,30 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
             }
         }
     }
+    let emit_findings = |fs: &[Finding]| if compact { emit_compact(fs) } else { emit(fs) };
+    let cfg = match load_config(root) {
+        Ok(c) => c,
+        Err(f) => return emit_findings(&[f]),
+    };
+    if let Some(contents) = intent {
+        return cmd_intent(root, &contents, &cfg);
+    }
+    // Clean-tree short-circuit: same config bytes + same tree ⇒ the
+    // deterministic verdict is already recorded; skip the law checks.
+    // Note: a warning-only run records too (warnings are shippable), so a
+    // re-check of an unchanged tree returns [] — warning dedup by design.
+    if diff.is_none() && paths.is_empty() {
+        if let Ok(s) = load(root) {
+            if s.last_clean_check == Some(clean_hash(root)) {
+                return emit_findings(&[]);
+            }
+        }
+    }
     let findings = run_checks(root, &paths, diff.as_deref(), &cfg);
-    let code = emit(&findings);
+    let code = emit_findings(&findings);
     if code == 0 && diff.is_none() && paths.is_empty() {
-        // A clean full check records the tree hash for the ship gate.
-        if let Err(f) = record_clean_check(root, tree_hash(&read_tree(root))) {
+        // A clean full check records the clean_hash for the ship gate.
+        if let Err(f) = record_clean_check(root, clean_hash(root)) {
             eprintln!("error [protocol] {}: {}", f.location.path, f.message);
             return 1;
         }
@@ -168,7 +192,7 @@ fn cmd_state(root: &Path, args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("get") => match load(root) {
             Ok(s) => {
-                println!("{}", serde_json::to_string(&s).unwrap());
+                println!("{}", veneer::state::public_json(&s));
                 eprintln!("phase: {}", s.phase.name());
                 0
             }
@@ -210,7 +234,7 @@ fn cmd_state(root: &Path, args: &[String]) -> i32 {
             }
             match set_phase(root, phase, &refs) {
                 Ok(s) => {
-                    println!("{}", serde_json::to_string(&s).unwrap());
+                    println!("{}", veneer::state::public_json(&s));
                     0
                 }
                 Err(f) => emit(&[f]),

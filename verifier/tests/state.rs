@@ -1,4 +1,4 @@
-use veneer::laws::{read_tree, tree_hash, Law};
+use veneer::laws::Law;
 use veneer::state::{load, record_clean_check, set_phase, store, transition, Phase, State};
 
 
@@ -63,8 +63,7 @@ fn ship_gate_requires_fresh_clean_check() {
     let f = set_phase(dir.path(), Phase::Ship, &[]).unwrap_err();
     assert!(f.message.contains("clean check"));
     // Record a clean check of the current tree → gate opens.
-    let h = tree_hash(&read_tree(dir.path()));
-    record_clean_check(dir.path(), h).unwrap();
+    record_clean_check(dir.path(), veneer::laws::clean_hash(dir.path())).unwrap();
     set_phase(dir.path(), Phase::Ship, &[("pr".into(), "7".into())]).unwrap();
     assert_eq!(load(dir.path()).unwrap().phase, Phase::Ship);
     assert_eq!(load(dir.path()).unwrap().refs["pr"], "7");
@@ -76,8 +75,7 @@ fn ship_gate_detects_stale_check() {
     std::fs::write(dir.path().join("code.rs"), "fn main() {}\n").unwrap();
     set_phase(dir.path(), Phase::Implement, &[]).unwrap();
     set_phase(dir.path(), Phase::Verify, &[]).unwrap();
-    let h = tree_hash(&read_tree(dir.path()));
-    record_clean_check(dir.path(), h).unwrap();
+    record_clean_check(dir.path(), veneer::laws::clean_hash(dir.path())).unwrap();
     // Tree changes after the clean check → stale → gate refuses.
     std::fs::write(dir.path().join("code.rs"), "fn main() { changed(); }\n").unwrap();
     let f = set_phase(dir.path(), Phase::Ship, &[]).unwrap_err();
@@ -109,8 +107,7 @@ fn new_cycle_requires_fresh_clean_check() {
     std::fs::write(dir.path().join("code.rs"), "fn main() {}\n").unwrap();
     set_phase(dir.path(), Phase::Implement, &[]).unwrap();
     set_phase(dir.path(), Phase::Verify, &[]).unwrap();
-    let h = tree_hash(&read_tree(dir.path()));
-    record_clean_check(dir.path(), h).unwrap();
+    record_clean_check(dir.path(), veneer::laws::clean_hash(dir.path())).unwrap();
     set_phase(dir.path(), Phase::Ship, &[]).unwrap();
     // New cycle; tree is byte-identical, but the old check must not count.
     set_phase(dir.path(), Phase::Plan, &[]).unwrap();
@@ -136,4 +133,18 @@ fn adversarial_state_shapes_are_findings_not_panics() {
         std::fs::write(dir.path().join(".veneer/state.json"), bad).unwrap();
         assert_eq!(load(dir.path()).unwrap_err().law, Law::Protocol, "input: {bad}");
     }
+}
+
+#[test]
+fn config_change_stales_clean_check() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("code.rs"), "fn main() {}\n").unwrap();
+    set_phase(dir.path(), Phase::Implement, &[]).unwrap();
+    set_phase(dir.path(), Phase::Verify, &[]).unwrap();
+    record_clean_check(dir.path(), veneer::laws::clean_hash(dir.path())).unwrap();
+    // Tightening the config after the clean check must stale the gate:
+    // the recorded verdict was earned under different rules.
+    std::fs::write(dir.path().join(".veneer/config.toml"), "loc_hard = 1\n").unwrap();
+    let f = set_phase(dir.path(), Phase::Ship, &[]).unwrap_err();
+    assert!(f.message.contains("stale"));
 }

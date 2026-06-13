@@ -2,7 +2,7 @@
 //! value-semantic, content-hashed state file. Re-runs converge: setting the
 //! current phase is a no-op success; replayed writes produce identical bytes.
 
-use crate::laws::{fnv64, read_tree, tree_hash, Finding, Law};
+use crate::laws::{clean_hash, fnv64, Finding, Law};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -137,7 +137,14 @@ pub fn store(root: &Path, s: &State) -> std::io::Result<()> {
     std::fs::rename(&tmp, state_path(root))
 }
 
-/// Record that `veneer check` ran clean against the tree with this hash.
+/// The agent-facing state view: phase and refs only. Gate internals
+/// (`last_clean_check`) live in the file, not in responses.
+pub fn public_json(s: &State) -> String {
+    serde_json::json!({ "phase": s.phase.name(), "refs": s.refs }).to_string()
+}
+
+/// Record that `veneer check` ran clean, storing the clean-check witness
+/// (the `clean_hash` over tree + config) for the ship gate.
 pub fn record_clean_check(root: &Path, hash: u64) -> Result<(), Finding> {
     let mut s = load(root)?;
     s.last_clean_check = Some(hash);
@@ -158,7 +165,7 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
     }
     // Ship→Ship is an idempotent no-op and intentionally not re-gated.
     if requested == Phase::Ship && s.phase != Phase::Ship {
-        let current = tree_hash(&read_tree(root));
+        let current = clean_hash(root);
         match s.last_clean_check {
             None => {
                 return Err(Finding::error(
@@ -174,7 +181,7 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
                     Law::Protocol,
                     ".veneer/state.json",
                     None,
-                    "ship gate: last clean check is stale (tree changed since)",
+                    "ship gate: last clean check is stale (tree or config changed since)",
                     Some("re-run `veneer check`, then ship"),
                 ))
             }

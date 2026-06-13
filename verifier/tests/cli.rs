@@ -22,11 +22,16 @@ fn init_materializes_harness_idempotently() {
     assert_eq!(out.status.code(), Some(0));
     assert!(dir.path().join(".veneer/config.toml").exists());
     assert!(dir.path().join(".claude/skills/veneer/SKILL.md").exists());
-    assert!(dir.path().join(".agents/skills/veneer/references/verify.md").exists());
+    assert!(!dir.path().join(".agents/skills/veneer/references").exists(),
+        "skill is a single file; no references dir");
+    let skill = std::fs::read_to_string(dir.path().join(".agents/skills/veneer/SKILL.md")).unwrap();
+    assert!(skill.contains("## Phase: verify"), "phase sections must be inlined");
+    assert!(skill.contains("--compact"), "the loop must use compact check output");
     // Re-run converges (idempotent)
     let before = std::fs::read_to_string(dir.path().join(".veneer/config.toml")).unwrap();
     assert_eq!(veneer(dir.path(), &["init"]).status.code(), Some(0));
     assert_eq!(std::fs::read_to_string(dir.path().join(".veneer/config.toml")).unwrap(), before);
+    assert!(before.contains("loc_exclude"), "default config must document loc_exclude");
 }
 
 #[test]
@@ -167,6 +172,30 @@ fn mcp_tools_call_invalid_action_returns_protocol_finding() {
 }
 
 #[test]
+fn mcp_state_error_findings_are_compact() {
+    // An invalid transition (plan → ship) returns a finding that carries a
+    // suggested_fix; the MCP error arm must still emit it compactly.
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"set","phase":"ship"}}}}}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("invalid transition"), "expected transition finding in: {text}");
+    assert!(!text.contains("suggested_fix"), "MCP state findings must be compact: {text}");
+}
+
+#[test]
 fn mcp_lists_check_and_state_tools() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
@@ -189,6 +218,58 @@ fn mcp_lists_check_and_state_tools() {
 }
 
 #[test]
+fn check_compact_omits_fix_and_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("huge.rs"), "l\n".repeat(1200)).unwrap();
+    let out = veneer(dir.path(), &["check", "--compact"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty(), "compact mode must not render to stderr");
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(findings[0]["law"], "module_budget");
+    assert!(findings[0].get("suggested_fix").is_none());
+    // Default mode is unchanged: stderr render + full schema.
+    let out = veneer(dir.path(), &["check"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("module_budget"));
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(findings[0].get("suggested_fix").is_some());
+}
+
+#[test]
+fn mcp_check_findings_are_compact() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("huge.rs"), "l\n".repeat(1200)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"veneer_check","arguments":{{}}}}}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("module_budget"), "expected a budget finding in: {text}");
+    // Find the tools/call response (id 2) and parse its embedded findings text.
+    let resp = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["id"] == 2)
+        .expect("tools/call response present");
+    let payload = resp["result"]["content"][0]["text"]
+        .as_str()
+        .expect("content text present");
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_str(payload).expect("payload is a JSON array of findings");
+    assert_eq!(findings[0]["law"], "module_budget");
+    assert!(findings[0].get("suggested_fix").is_none(), "MCP findings must be compact: {payload}");
+}
+
+#[test]
 fn malformed_config_fails_check_via_cli() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();
@@ -196,4 +277,75 @@ fn malformed_config_fails_check_via_cli() {
     let out = veneer(dir.path(), &["check"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stdout).contains("malformed config"));
+}
+
+#[test]
+fn state_output_omits_gate_internals() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    veneer(dir.path(), &["state", "set", "implement"]);
+    veneer(dir.path(), &["state", "set", "verify"]);
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(0)); // records the gate hash
+    let out = veneer(dir.path(), &["state", "get"]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(v.get("last_clean_check").is_none(), "gate internals must not be echoed: {v}");
+    assert_eq!(v["phase"], "verify");
+    // The gate itself still functions on the file's data.
+    assert_eq!(veneer(dir.path(), &["state", "set", "ship"]).status.code(), Some(0));
+}
+
+#[test]
+fn mcp_state_response_omits_gate_internals() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"get"}}}}}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("plan"), "expected default phase in: {text}");
+    assert!(!text.contains("last_clean_check"), "MCP state must be trimmed: {text}");
+}
+
+#[test]
+fn clean_check_short_circuits_and_edits_revive_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(0)); // records clean
+    // Unchanged tree+config: still clean, identical output.
+    let out = veneer(dir.path(), &["check"]);
+    assert_eq!(out.status.code(), Some(0));
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(findings.is_empty());
+    // An edit after the clean check re-runs the laws and finds violations.
+    std::fs::write(dir.path().join("a.rs"), "l\n".repeat(1200)).unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(1));
+    // A config edit alone also defeats the short-circuit (soundness):
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(0)); // clean again, records
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/config.toml"), "loc_hard = 0\nloc_soft = 0\n").unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(1)); // re-checked under new rules
+}
+
+#[test]
+fn compact_check_honors_malformed_config() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/config.toml"), "loc_soft = \"oops").unwrap();
+    let out = veneer(dir.path(), &["check", "--compact"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty(), "compact mode must not render to stderr");
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(findings[0]["law"], "protocol");
+    assert!(findings[0].get("suggested_fix").is_none());
 }

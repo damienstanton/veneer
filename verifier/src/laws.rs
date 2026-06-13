@@ -74,6 +74,14 @@ pub struct Config {
     pub loc_hard: u32,
     #[serde(default)]
     pub modules: Vec<ModuleDecl>,
+    /// LoC-budget exclusions: entries starting with '.' are extension
+    /// suffixes (".json"); all others are root-relative path prefixes
+    /// ("docs/"). Excluded files still participate in sealing, idempotency,
+    /// and the tree hash — only the budget check skips them. Note: prefix
+    /// matching is a plain string prefix, so "docs" also matches "docsmore/";
+    /// include the trailing '/' for directory entries.
+    #[serde(default)]
+    pub loc_exclude: Vec<String>,
 }
 
 fn default_soft() -> u32 { 500 }
@@ -81,7 +89,9 @@ fn default_hard() -> u32 { 1000 }
 
 impl Default for Config {
     fn default() -> Config {
-        Config { loc_soft: 500, loc_hard: 1000, modules: Vec::new() }
+        Config {
+            loc_soft: 500, loc_hard: 1000, modules: Vec::new(), loc_exclude: Vec::new(),
+        }
     }
 }
 
@@ -150,14 +160,33 @@ fn rel(root: &Path, p: &Path) -> String {
     p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/")
 }
 
+/// True when `path` (root-relative, '/'-separated) matches a `loc_exclude`
+/// entry. Entries starting with '.' are extension suffixes; all others are
+/// path prefixes. Blank entries are inert.
+fn is_loc_excluded(path: &str, cfg: &Config) -> bool {
+    cfg.loc_exclude.iter().any(|pat| {
+        let pat = pat.trim();
+        if pat.is_empty() {
+            false
+        } else if pat.starts_with('.') {
+            path.ends_with(pat)
+        } else {
+            path.starts_with(pat)
+        }
+    })
+}
+
 /// Law 2 (first-principles modules): a module is a file; Warning above the
 /// soft bound, Error above the hard bound. Non-UTF8 files are not modules.
 pub fn check_module_budget(root: &Path, files: &[PathBuf], cfg: &Config) -> Vec<Finding> {
     let mut findings = Vec::new();
     for f in files {
+        let path = rel(root, f);
+        if is_loc_excluded(&path, cfg) {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(f) else { continue };
         let n = loc(&text);
-        let path = rel(root, f);
         let fix = "split into first-principles modules (target ~500 LoC)";
         if n > cfg.loc_hard {
             findings.push(Finding::error(
@@ -365,6 +394,19 @@ pub fn read_tree(root: &Path) -> BTreeMap<String, String> {
     t
 }
 
+/// The hash that witnesses a clean check: raw config bytes + tree hash.
+/// Including the config means editing limits or module declarations
+/// invalidates a recorded clean check — the verdict could differ under the
+/// new rules. (The walker skips `.veneer/`, so the tree hash alone cannot
+/// see config edits.)
+pub fn clean_hash(root: &Path) -> u64 {
+    let cfg_raw = std::fs::read_to_string(root.join(".veneer/config.toml")).unwrap_or_default();
+    let mut buf = cfg_raw.into_bytes();
+    buf.push(0);
+    buf.extend_from_slice(&tree_hash(&read_tree(root)).to_be_bytes());
+    fnv64(&buf)
+}
+
 /// Law 3 (idempotency): applying a patch twice must equal applying it once.
 /// T1 = apply(T0, p); T2 = apply(T1, p) or T1 if re-application fails cleanly.
 /// The judgement hash(T1) ≐ hash(T2) runs through the kernel: hashes are
@@ -458,6 +500,21 @@ pub fn check_sealing(root: &Path, files: &[PathBuf], cfg: &Config) -> Vec<Findin
         }
     }
     findings
+}
+
+/// Findings serialized without `suggested_fix` — the token-lean trace for
+/// agent consumption (per-law fixes are documented in the skill). The full
+/// schema is unchanged; this is an output view, not a data-model change.
+pub fn findings_json_compact(findings: &[Finding]) -> String {
+    let mut v = serde_json::to_value(findings).expect("findings serialization is infallible");
+    if let Some(arr) = v.as_array_mut() {
+        for f in arr {
+            if let Some(m) = f.as_object_mut() {
+                m.remove("suggested_fix");
+            }
+        }
+    }
+    v.to_string()
 }
 
 /// The check orchestrator used by CLI, MCP, and intent execution.

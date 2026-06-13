@@ -1,7 +1,7 @@
 //! MCP surface: the same check/state code paths served as tools over stdio.
 //! A thin adapter — no second implementation of anything.
 
-use crate::laws::{load_config, run_checks, Finding, Law};
+use crate::laws::{findings_json_compact, load_config, run_checks, Finding, Law};
 use crate::state::{load, set_phase, Phase};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -49,55 +49,58 @@ impl VeneerServer {
         let cfg = match load_config(&self.root) {
             Ok(c) => c,
             Err(f) => {
-                return CallToolResult::success(vec![Content::text(
-                    serde_json::to_string(&[f]).unwrap(),
-                )])
+                return CallToolResult::success(vec![Content::text(findings_json_compact(&[f]))])
             }
         };
         let paths: Vec<PathBuf> = args.0.paths.iter().map(PathBuf::from).collect();
+        if args.0.diff.is_none() && paths.is_empty() {
+            if let Ok(s) = crate::state::load(&self.root) {
+                if s.last_clean_check == Some(crate::laws::clean_hash(&self.root)) {
+                    return CallToolResult::success(vec![Content::text("[]".to_string())]);
+                }
+            }
+        }
         let findings = run_checks(&self.root, &paths, args.0.diff.as_deref(), &cfg);
-        CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&findings).unwrap(),
-        )])
+        CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
     }
 
     #[tool(description = "Read or transition the veneer lifecycle state (plan → implement → verify → ship). Invalid transitions and a stale ship gate return protocol findings.")]
     fn veneer_state(&self, args: Parameters<StateArgs>) -> CallToolResult {
         let a = args.0;
+        // All MCP findings output is compact (no suggested_fix), matching
+        // veneer_check; success arms return the trimmed public state view.
         let body = match a.action.as_str() {
             "get" => match load(&self.root) {
-                Ok(s) => serde_json::to_string(&s).unwrap(),
-                Err(f) => serde_json::to_string(&[f]).unwrap(),
+                Ok(s) => crate::state::public_json(&s),
+                Err(f) => findings_json_compact(&[f]),
             },
             "reset" => match set_phase(&self.root, Phase::Plan, &[]) {
-                Ok(s) => serde_json::to_string(&s).unwrap(),
-                Err(f) => serde_json::to_string(&[f]).unwrap(),
+                Ok(s) => crate::state::public_json(&s),
+                Err(f) => findings_json_compact(&[f]),
             },
             "set" => {
                 let refs: Vec<(String, String)> = a.refs.into_iter().collect();
                 match a.phase.as_deref().and_then(Phase::parse) {
-                    None => serde_json::to_string(&[Finding::error(
+                    None => findings_json_compact(&[Finding::error(
                         Law::Protocol,
                         "<mcp>",
                         None,
                         "set requires phase: plan|implement|verify|ship",
                         None,
-                    )])
-                    .unwrap(), // infallible: plain derived structs
+                    )]),
                     Some(p) => match set_phase(&self.root, p, &refs) {
-                        Ok(s) => serde_json::to_string(&s).unwrap(),
-                        Err(f) => serde_json::to_string(&[f]).unwrap(),
+                        Ok(s) => crate::state::public_json(&s),
+                        Err(f) => findings_json_compact(&[f]),
                     },
                 }
             }
-            _ => serde_json::to_string(&[Finding::error(
+            _ => findings_json_compact(&[Finding::error(
                 Law::Protocol,
                 "<mcp>",
                 None,
                 "action must be get|set|reset",
                 None,
-            )])
-            .unwrap(),
+            )]),
         };
         CallToolResult::success(vec![Content::text(body)])
     }

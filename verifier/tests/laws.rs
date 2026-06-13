@@ -55,6 +55,20 @@ fn missing_config_falls_back_to_default() {
 }
 
 #[test]
+fn config_parses_loc_exclude() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    std::fs::write(
+        dir.path().join(".veneer/config.toml"),
+        "loc_exclude = [\".json\", \"docs/\"]\n",
+    )
+    .unwrap();
+    let c = load_config(dir.path()).unwrap();
+    assert_eq!(c.loc_exclude, vec![".json".to_string(), "docs/".to_string()]);
+    assert!(Config::default().loc_exclude.is_empty());
+}
+
+#[test]
 fn malformed_config_is_a_protocol_finding() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();
@@ -118,6 +132,35 @@ fn binary_files_are_skipped() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
     let cfg = veneer::laws::Config::default();
+    let files = walk_files(dir.path());
+    assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
+}
+
+#[test]
+fn loc_exclude_skips_extensions_and_dir_prefixes() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "schema.json", &"line\n".repeat(1200));
+    write(dir.path(), "docs/guide.md", &"line\n".repeat(1200));
+    write(dir.path(), "big.rs", &"line\n".repeat(1200));
+    let cfg = Config {
+        // Blank entries are inert, never match-everything.
+        loc_exclude: vec![".json".into(), "docs/".into(), "".into(), "   ".into()],
+        ..Config::default()
+    };
+    let files = walk_files(dir.path());
+    let findings = check_module_budget(dir.path(), &files, &cfg);
+    assert_eq!(findings.len(), 1, "only big.rs may be flagged: {findings:?}");
+    assert_eq!(findings[0].location.path, "big.rs");
+}
+
+#[test]
+fn loc_exclude_prefix_without_slash_matches_sibling_dirs() {
+    // "docs" (no trailing '/') is a plain prefix: it also matches docsmore/.
+    // This is by design — see the loc_exclude doc comment; use "docs/" to
+    // scope to the directory.
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "docsmore/big.md", &"line\n".repeat(1200));
+    let cfg = Config { loc_exclude: vec!["docs".into()], ..Config::default() };
     let files = walk_files(dir.path());
     assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
 }
@@ -396,6 +439,24 @@ fn path_containing_dev_null_is_not_a_deletion() {
 fn deletion_patch_with_additions_is_rejected() {
     let patch = "--- a/gone.txt\n+++ /dev/null\n@@ -1,1 +1,1 @@\n-alpha\n+beta\n";
     assert!(parse_patch(patch).is_err());
+}
+
+#[test]
+fn compact_findings_omit_suggested_fix() {
+    let f = Finding::error(
+        Law::ModuleBudget,
+        "big.rs",
+        None,
+        "module is 1200 LoC, exceeds hard bound 1000",
+        Some("split into first-principles modules (target ~500 LoC)"),
+    );
+    let s = veneer::laws::findings_json_compact(&[f]);
+    assert!(!s.contains("suggested_fix"));
+    let v: Vec<serde_json::Value> = serde_json::from_str(&s).unwrap();
+    assert_eq!(v[0]["law"], "module_budget");
+    assert_eq!(v[0]["severity"], "error");
+    assert_eq!(v[0]["location"]["path"], "big.rs");
+    assert_eq!(v[0]["message"], "module is 1200 LoC, exceeds hard bound 1000");
 }
 
 #[test]
