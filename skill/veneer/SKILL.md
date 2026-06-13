@@ -116,8 +116,8 @@ The repair loop. Bounded: 3 iterations per finding, then surface to the user.
 2. Run `veneer check --compact`. Parse the JSON findings from stdout.
 3. For each finding: read `law`, `location`, `message`. Fix exactly the
    named violation (per-law guidance above) — no drive-by refactoring.
-4. Re-run `veneer check --compact`. A clean run records the tree hash for
-   the ship gate; any edit after it goes stale, so check last.
+4. Re-run `veneer check --compact`. A clean run records the ship-gate
+   witness (tree + config); any edit to either goes stale, so check last.
 5. Clean (exit 0, no error findings) → `veneer state set ship`.
    Findings persist after 3 honest attempts → stop, report the finding JSON
    and what you tried to the user.

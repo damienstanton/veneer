@@ -143,7 +143,8 @@ pub fn public_json(s: &State) -> String {
     serde_json::json!({ "phase": s.phase.name(), "refs": s.refs }).to_string()
 }
 
-/// Record that `veneer check` ran clean against the tree with this hash.
+/// Record that `veneer check` ran clean, storing the clean-check witness
+/// (the `clean_hash` over tree + config) for the ship gate.
 pub fn record_clean_check(root: &Path, hash: u64) -> Result<(), Finding> {
     let mut s = load(root)?;
     s.last_clean_check = Some(hash);
@@ -180,7 +181,7 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
                     Law::Protocol,
                     ".veneer/state.json",
                     None,
-                    "ship gate: last clean check is stale (tree changed since)",
+                    "ship gate: last clean check is stale (tree or config changed since)",
                     Some("re-run `veneer check`, then ship"),
                 ))
             }

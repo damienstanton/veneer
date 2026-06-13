@@ -172,6 +172,30 @@ fn mcp_tools_call_invalid_action_returns_protocol_finding() {
 }
 
 #[test]
+fn mcp_state_error_findings_are_compact() {
+    // An invalid transition (plan → ship) returns a finding that carries a
+    // suggested_fix; the MCP error arm must still emit it compactly.
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"set","phase":"ship"}}}}}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("invalid transition"), "expected transition finding in: {text}");
+    assert!(!text.contains("suggested_fix"), "MCP state findings must be compact: {text}");
+}
+
+#[test]
 fn mcp_lists_check_and_state_tools() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
