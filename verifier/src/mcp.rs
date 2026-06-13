@@ -62,11 +62,11 @@ impl VeneerServer {
         let a = args.0;
         let body = match a.action.as_str() {
             "get" => match load(&self.root) {
-                Ok(s) => serde_json::to_string(&s).unwrap(),
+                Ok(s) => crate::state::public_json(&s),
                 Err(f) => serde_json::to_string(&[f]).unwrap(),
             },
             "reset" => match set_phase(&self.root, Phase::Plan, &[]) {
-                Ok(s) => serde_json::to_string(&s).unwrap(),
+                Ok(s) => crate::state::public_json(&s),
                 Err(f) => serde_json::to_string(&[f]).unwrap(),
             },
             "set" => {
@@ -81,7 +81,7 @@ impl VeneerServer {
                     )])
                     .unwrap(), // infallible: plain derived structs
                     Some(p) => match set_phase(&self.root, p, &refs) {
-                        Ok(s) => serde_json::to_string(&s).unwrap(),
+                        Ok(s) => crate::state::public_json(&s),
                         Err(f) => serde_json::to_string(&[f]).unwrap(),
                     },
                 }

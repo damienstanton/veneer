@@ -252,6 +252,43 @@ fn malformed_config_fails_check_via_cli() {
 }
 
 #[test]
+fn state_output_omits_gate_internals() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    veneer(dir.path(), &["state", "set", "implement"]);
+    veneer(dir.path(), &["state", "set", "verify"]);
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(0)); // records the gate hash
+    let out = veneer(dir.path(), &["state", "get"]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(v.get("last_clean_check").is_none(), "gate internals must not be echoed: {v}");
+    assert_eq!(v["phase"], "verify");
+    // The gate itself still functions on the file's data.
+    assert_eq!(veneer(dir.path(), &["state", "set", "ship"]).status.code(), Some(0));
+}
+
+#[test]
+fn mcp_state_response_omits_gate_internals() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"get"}}}}}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("plan"), "expected default phase in: {text}");
+    assert!(!text.contains("last_clean_check"), "MCP state must be trimmed: {text}");
+}
+
+#[test]
 fn compact_check_honors_malformed_config() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();

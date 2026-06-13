@@ -137,6 +137,12 @@ pub fn store(root: &Path, s: &State) -> std::io::Result<()> {
     std::fs::rename(&tmp, state_path(root))
 }
 
+/// The agent-facing state view: phase and refs only. Gate internals
+/// (`last_clean_check`) live in the file, not in responses.
+pub fn public_json(s: &State) -> String {
+    serde_json::json!({ "phase": s.phase.name(), "refs": s.refs }).to_string()
+}
+
 /// Record that `veneer check` ran clean against the tree with this hash.
 pub fn record_clean_check(root: &Path, hash: u64) -> Result<(), Finding> {
     let mut s = load(root)?;

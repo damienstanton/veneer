@@ -186,7 +186,7 @@ fn cmd_state(root: &Path, args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("get") => match load(root) {
             Ok(s) => {
-                println!("{}", serde_json::to_string(&s).unwrap());
+                println!("{}", veneer::state::public_json(&s));
                 eprintln!("phase: {}", s.phase.name());
                 0
             }
@@ -228,7 +228,7 @@ fn cmd_state(root: &Path, args: &[String]) -> i32 {
             }
             match set_phase(root, phase, &refs) {
                 Ok(s) => {
-                    println!("{}", serde_json::to_string(&s).unwrap());
+                    println!("{}", veneer::state::public_json(&s));
                     0
                 }
                 Err(f) => emit(&[f]),
