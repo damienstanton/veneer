@@ -18,11 +18,6 @@ USAGE:
 // Embedded skill (kept in sync by include_str! — a build error if files move).
 const SKILL_FILES: &[(&str, &str)] = &[
     ("SKILL.md", include_str!("../../skill/veneer/SKILL.md")),
-    ("references/laws.md", include_str!("../../skill/veneer/references/laws.md")),
-    ("references/plan.md", include_str!("../../skill/veneer/references/plan.md")),
-    ("references/implement.md", include_str!("../../skill/veneer/references/implement.md")),
-    ("references/verify.md", include_str!("../../skill/veneer/references/verify.md")),
-    ("references/ship.md", include_str!("../../skill/veneer/references/ship.md")),
 ];
 
 const DEFAULT_CONFIG: &str = "\

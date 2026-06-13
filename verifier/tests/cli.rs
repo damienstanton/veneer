@@ -22,7 +22,11 @@ fn init_materializes_harness_idempotently() {
     assert_eq!(out.status.code(), Some(0));
     assert!(dir.path().join(".veneer/config.toml").exists());
     assert!(dir.path().join(".claude/skills/veneer/SKILL.md").exists());
-    assert!(dir.path().join(".agents/skills/veneer/references/verify.md").exists());
+    assert!(!dir.path().join(".agents/skills/veneer/references").exists(),
+        "skill is a single file; no references dir");
+    let skill = std::fs::read_to_string(dir.path().join(".agents/skills/veneer/SKILL.md")).unwrap();
+    assert!(skill.contains("## Phase: verify"), "phase sections must be inlined");
+    assert!(skill.contains("--compact"), "the loop must use compact check output");
     // Re-run converges (idempotent)
     let before = std::fs::read_to_string(dir.path().join(".veneer/config.toml")).unwrap();
     assert_eq!(veneer(dir.path(), &["init"]).status.code(), Some(0));
