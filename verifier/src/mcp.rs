@@ -1,7 +1,7 @@
 //! MCP surface: the same check/state code paths served as tools over stdio.
 //! A thin adapter — no second implementation of anything.
 
-use crate::laws::{load_config, run_checks, Finding, Law};
+use crate::laws::{findings_json_compact, load_config, run_checks, Finding, Law};
 use crate::state::{load, set_phase, Phase};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -49,16 +49,12 @@ impl VeneerServer {
         let cfg = match load_config(&self.root) {
             Ok(c) => c,
             Err(f) => {
-                return CallToolResult::success(vec![Content::text(
-                    serde_json::to_string(&[f]).unwrap(),
-                )])
+                return CallToolResult::success(vec![Content::text(findings_json_compact(&[f]))])
             }
         };
         let paths: Vec<PathBuf> = args.0.paths.iter().map(PathBuf::from).collect();
         let findings = run_checks(&self.root, &paths, args.0.diff.as_deref(), &cfg);
-        CallToolResult::success(vec![Content::text(
-            serde_json::to_string(&findings).unwrap(),
-        )])
+        CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
     }
 
     #[tool(description = "Read or transition the veneer lifecycle state (plan → implement → verify → ship). Invalid transitions and a stale ship gate return protocol findings.")]

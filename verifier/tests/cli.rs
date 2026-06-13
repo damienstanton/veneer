@@ -207,6 +207,29 @@ fn check_compact_omits_fix_and_stderr() {
 }
 
 #[test]
+fn mcp_check_findings_are_compact() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("huge.rs"), "l\n".repeat(1200)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"veneer_check","arguments":{{}}}}}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("module_budget"), "expected a budget finding in: {text}");
+    assert!(!text.contains("suggested_fix"), "MCP findings must be compact: {text}");
+}
+
+#[test]
 fn malformed_config_fails_check_via_cli() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();
