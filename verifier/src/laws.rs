@@ -394,6 +394,19 @@ pub fn read_tree(root: &Path) -> BTreeMap<String, String> {
     t
 }
 
+/// The hash that witnesses a clean check: raw config bytes + tree hash.
+/// Including the config means editing limits or module declarations
+/// invalidates a recorded clean check — the verdict could differ under the
+/// new rules. (The walker skips `.veneer/`, so the tree hash alone cannot
+/// see config edits.)
+pub fn clean_hash(root: &Path) -> u64 {
+    let cfg_raw = std::fs::read_to_string(root.join(".veneer/config.toml")).unwrap_or_default();
+    let mut buf = cfg_raw.into_bytes();
+    buf.push(0);
+    buf.extend_from_slice(&tree_hash(&read_tree(root)).to_be_bytes());
+    fnv64(&buf)
+}
+
 /// Law 3 (idempotency): applying a patch twice must equal applying it once.
 /// T1 = apply(T0, p); T2 = apply(T1, p) or T1 if re-application fails cleanly.
 /// The judgement hash(T1) ≐ hash(T2) runs through the kernel: hashes are

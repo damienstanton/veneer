@@ -2,7 +2,7 @@
 //! value-semantic, content-hashed state file. Re-runs converge: setting the
 //! current phase is a no-op success; replayed writes produce identical bytes.
 
-use crate::laws::{fnv64, read_tree, tree_hash, Finding, Law};
+use crate::laws::{clean_hash, fnv64, Finding, Law};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -164,7 +164,7 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
     }
     // Ship→Ship is an idempotent no-op and intentionally not re-gated.
     if requested == Phase::Ship && s.phase != Phase::Ship {
-        let current = tree_hash(&read_tree(root));
+        let current = clean_hash(root);
         match s.last_clean_check {
             None => {
                 return Err(Finding::error(

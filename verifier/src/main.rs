@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use veneer::intent::{parse_intent, execute, Outcome};
-use veneer::laws::{findings_json_compact, load_config, read_tree, run_checks, tree_hash, Finding, Severity};
+use veneer::laws::{clean_hash, findings_json_compact, load_config, run_checks, Finding, Severity};
 use veneer::state::{load, record_clean_check, set_phase, Phase};
 
 const USAGE: &str = "\
@@ -153,11 +153,22 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
     if let Some(contents) = intent {
         return cmd_intent(root, &contents, &cfg);
     }
+    // Clean-tree short-circuit: same config bytes + same tree ⇒ the
+    // deterministic verdict is already recorded; skip the law checks.
+    // Note: a warning-only run records too (warnings are shippable), so a
+    // re-check of an unchanged tree returns [] — warning dedup by design.
+    if diff.is_none() && paths.is_empty() {
+        if let Ok(s) = load(root) {
+            if s.last_clean_check == Some(clean_hash(root)) {
+                return emit_findings(&[]);
+            }
+        }
+    }
     let findings = run_checks(root, &paths, diff.as_deref(), &cfg);
     let code = emit_findings(&findings);
     if code == 0 && diff.is_none() && paths.is_empty() {
-        // A clean full check records the tree hash for the ship gate.
-        if let Err(f) = record_clean_check(root, tree_hash(&read_tree(root))) {
+        // A clean full check records the clean_hash for the ship gate.
+        if let Err(f) = record_clean_check(root, clean_hash(root)) {
             eprintln!("error [protocol] {}: {}", f.location.path, f.message);
             return 1;
         }

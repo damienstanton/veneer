@@ -289,6 +289,27 @@ fn mcp_state_response_omits_gate_internals() {
 }
 
 #[test]
+fn clean_check_short_circuits_and_edits_revive_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(0)); // records clean
+    // Unchanged tree+config: still clean, identical output.
+    let out = veneer(dir.path(), &["check"]);
+    assert_eq!(out.status.code(), Some(0));
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(findings.is_empty());
+    // An edit after the clean check re-runs the laws and finds violations.
+    std::fs::write(dir.path().join("a.rs"), "l\n".repeat(1200)).unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(1));
+    // A config edit alone also defeats the short-circuit (soundness):
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(0)); // clean again, records
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/config.toml"), "loc_hard = 0\nloc_soft = 0\n").unwrap();
+    assert_eq!(veneer(dir.path(), &["check"]).status.code(), Some(1)); // re-checked under new rules
+}
+
+#[test]
 fn compact_check_honors_malformed_config() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();

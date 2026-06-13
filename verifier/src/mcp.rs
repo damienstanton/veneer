@@ -53,6 +53,13 @@ impl VeneerServer {
             }
         };
         let paths: Vec<PathBuf> = args.0.paths.iter().map(PathBuf::from).collect();
+        if args.0.diff.is_none() && paths.is_empty() {
+            if let Ok(s) = crate::state::load(&self.root) {
+                if s.last_clean_check == Some(crate::laws::clean_hash(&self.root)) {
+                    return CallToolResult::success(vec![Content::text("[]".to_string())]);
+                }
+            }
+        }
         let findings = run_checks(&self.root, &paths, args.0.diff.as_deref(), &cfg);
         CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
     }
