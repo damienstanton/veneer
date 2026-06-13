@@ -77,7 +77,9 @@ pub struct Config {
     /// LoC-budget exclusions: entries starting with '.' are extension
     /// suffixes (".json"); all others are root-relative path prefixes
     /// ("docs/"). Excluded files still participate in sealing, idempotency,
-    /// and the tree hash — only the budget check skips them.
+    /// and the tree hash — only the budget check skips them. Note: prefix
+    /// matching is a plain string prefix, so "docs" also matches "docsmore/";
+    /// include the trailing '/' for directory entries.
     #[serde(default)]
     pub loc_exclude: Vec<String>,
 }
@@ -87,7 +89,9 @@ fn default_hard() -> u32 { 1000 }
 
 impl Default for Config {
     fn default() -> Config {
-        Config { loc_soft: 500, loc_hard: 1000, modules: Vec::new(), loc_exclude: Vec::new() }
+        Config {
+            loc_soft: 500, loc_hard: 1000, modules: Vec::new(), loc_exclude: Vec::new(),
+        }
     }
 }
 

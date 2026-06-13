@@ -153,6 +153,18 @@ fn loc_exclude_skips_extensions_and_dir_prefixes() {
     assert_eq!(findings[0].location.path, "big.rs");
 }
 
+#[test]
+fn loc_exclude_prefix_without_slash_matches_sibling_dirs() {
+    // "docs" (no trailing '/') is a plain prefix: it also matches docsmore/.
+    // This is by design — see the loc_exclude doc comment; use "docs/" to
+    // scope to the directory.
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "docsmore/big.md", &"line\n".repeat(1200));
+    let cfg = Config { loc_exclude: vec!["docs".into()], ..Config::default() };
+    let files = walk_files(dir.path());
+    assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
+}
+
 use std::collections::BTreeMap;
 use veneer::laws::{apply_patch, parse_patch};
 
