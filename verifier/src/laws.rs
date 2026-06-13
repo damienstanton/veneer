@@ -156,14 +156,33 @@ fn rel(root: &Path, p: &Path) -> String {
     p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/")
 }
 
+/// True when `path` (root-relative, '/'-separated) matches a `loc_exclude`
+/// entry. Entries starting with '.' are extension suffixes; all others are
+/// path prefixes. Blank entries are inert.
+fn is_loc_excluded(path: &str, cfg: &Config) -> bool {
+    cfg.loc_exclude.iter().any(|pat| {
+        let pat = pat.trim();
+        if pat.is_empty() {
+            false
+        } else if pat.starts_with('.') {
+            path.ends_with(pat)
+        } else {
+            path.starts_with(pat)
+        }
+    })
+}
+
 /// Law 2 (first-principles modules): a module is a file; Warning above the
 /// soft bound, Error above the hard bound. Non-UTF8 files are not modules.
 pub fn check_module_budget(root: &Path, files: &[PathBuf], cfg: &Config) -> Vec<Finding> {
     let mut findings = Vec::new();
     for f in files {
+        let path = rel(root, f);
+        if is_loc_excluded(&path, cfg) {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(f) else { continue };
         let n = loc(&text);
-        let path = rel(root, f);
         let fix = "split into first-principles modules (target ~500 LoC)";
         if n > cfg.loc_hard {
             findings.push(Finding::error(

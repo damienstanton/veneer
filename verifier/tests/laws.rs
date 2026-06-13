@@ -136,6 +136,23 @@ fn binary_files_are_skipped() {
     assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
 }
 
+#[test]
+fn loc_exclude_skips_extensions_and_dir_prefixes() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "schema.json", &"line\n".repeat(1200));
+    write(dir.path(), "docs/guide.md", &"line\n".repeat(1200));
+    write(dir.path(), "big.rs", &"line\n".repeat(1200));
+    let cfg = Config {
+        // Blank entries are inert, never match-everything.
+        loc_exclude: vec![".json".into(), "docs/".into(), "".into(), "   ".into()],
+        ..Config::default()
+    };
+    let files = walk_files(dir.path());
+    let findings = check_module_budget(dir.path(), &files, &cfg);
+    assert_eq!(findings.len(), 1, "only big.rs may be flagged: {findings:?}");
+    assert_eq!(findings[0].location.path, "big.rs");
+}
+
 use std::collections::BTreeMap;
 use veneer::laws::{apply_patch, parse_patch};
 
