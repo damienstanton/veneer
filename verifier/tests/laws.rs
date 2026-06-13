@@ -442,6 +442,24 @@ fn deletion_patch_with_additions_is_rejected() {
 }
 
 #[test]
+fn compact_findings_omit_suggested_fix() {
+    let f = Finding::error(
+        Law::ModuleBudget,
+        "big.rs",
+        None,
+        "module is 1200 LoC, exceeds hard bound 1000",
+        Some("split into first-principles modules (target ~500 LoC)"),
+    );
+    let s = veneer::laws::findings_json_compact(&[f]);
+    assert!(!s.contains("suggested_fix"));
+    let v: Vec<serde_json::Value> = serde_json::from_str(&s).unwrap();
+    assert_eq!(v[0]["law"], "module_budget");
+    assert_eq!(v[0]["severity"], "error");
+    assert_eq!(v[0]["location"]["path"], "big.rs");
+    assert_eq!(v[0]["message"], "module is 1200 LoC, exceeds hard bound 1000");
+}
+
+#[test]
 fn lockfiles_are_not_modules() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "deps.lock", &"line\n".repeat(1200));

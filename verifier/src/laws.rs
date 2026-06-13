@@ -489,6 +489,19 @@ pub fn check_sealing(root: &Path, files: &[PathBuf], cfg: &Config) -> Vec<Findin
     findings
 }
 
+/// Findings serialized without `suggested_fix` — the token-lean trace for
+/// agent consumption (per-law fixes are documented in the skill). The full
+/// schema is unchanged; this is an output view, not a data-model change.
+pub fn findings_json_compact(findings: &[Finding]) -> String {
+    let mut v = serde_json::to_value(findings).expect("findings serialization is infallible");
+    if let Some(arr) = v.as_array_mut() {
+        for f in arr {
+            f.as_object_mut().map(|m| m.remove("suggested_fix"));
+        }
+    }
+    v.to_string()
+}
+
 /// The check orchestrator used by CLI, MCP, and intent execution.
 /// paths: restrict budget check to these (empty = whole tree).
 /// diff: also run the idempotency law against the on-disk tree.
