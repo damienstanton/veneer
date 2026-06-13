@@ -3,14 +3,14 @@
 
 use std::path::{Path, PathBuf};
 use veneer::intent::{parse_intent, execute, Outcome};
-use veneer::laws::{load_config, read_tree, run_checks, tree_hash, Finding, Severity};
+use veneer::laws::{findings_json_compact, load_config, read_tree, run_checks, tree_hash, Finding, Severity};
 use veneer::state::{load, record_clean_check, set_phase, Phase};
 
 const USAGE: &str = "\
 veneer — minimal CTT-grounded agentic harness
 USAGE:
   veneer init [--link <skill-src-dir>]
-  veneer check [--diff <patch-file>] [--intent <intent.json>] [paths...]
+  veneer check [--compact] [--diff <patch-file>] [--intent <intent.json>] [paths...]
   veneer state get | set <phase> [--ref k=v ...] | reset
   veneer mcp
 ";
@@ -52,6 +52,11 @@ fn emit(findings: &[Finding]) -> i32 {
             f.suggested_fix.as_deref().map(|s| format!(" — fix: {s}")).unwrap_or_default()
         );
     }
+    if findings.iter().any(|f| f.severity == Severity::Error) { 1 } else { 0 }
+}
+
+fn emit_compact(findings: &[Finding]) -> i32 {
+    println!("{}", findings_json_compact(findings));
     if findings.iter().any(|f| f.severity == Severity::Error) { 1 } else { 0 }
 }
 
@@ -106,15 +111,17 @@ fn cmd_init(root: &Path, link: Option<&str>) -> i32 {
 }
 
 fn cmd_check(root: &Path, args: &[String]) -> i32 {
-    let cfg = match load_config(root) {
-        Ok(c) => c,
-        Err(f) => return emit(&[f]),
-    };
     let mut diff: Option<String> = None;
+    let mut intent: Option<String> = None;
+    let mut compact = false;
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--compact" => {
+                compact = true;
+                i += 1;
+            }
             "--diff" | "--intent" => {
                 let flag = args[i].clone();
                 let Some(file) = args.get(i + 1) else {
@@ -128,7 +135,7 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
                 if flag == "--diff" {
                     diff = Some(contents);
                 } else {
-                    return cmd_intent(root, &contents, &cfg);
+                    intent = Some(contents);
                 }
                 i += 2;
             }
@@ -138,8 +145,16 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
             }
         }
     }
+    let emit_findings = |fs: &[Finding]| if compact { emit_compact(fs) } else { emit(fs) };
+    let cfg = match load_config(root) {
+        Ok(c) => c,
+        Err(f) => return emit_findings(&[f]),
+    };
+    if let Some(contents) = intent {
+        return cmd_intent(root, &contents, &cfg);
+    }
     let findings = run_checks(root, &paths, diff.as_deref(), &cfg);
-    let code = emit(&findings);
+    let code = emit_findings(&findings);
     if code == 0 && diff.is_none() && paths.is_empty() {
         // A clean full check records the tree hash for the ship gate.
         if let Err(f) = record_clean_check(root, tree_hash(&read_tree(root))) {

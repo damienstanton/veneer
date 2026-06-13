@@ -190,6 +190,23 @@ fn mcp_lists_check_and_state_tools() {
 }
 
 #[test]
+fn check_compact_omits_fix_and_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("huge.rs"), "l\n".repeat(1200)).unwrap();
+    let out = veneer(dir.path(), &["check", "--compact"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty(), "compact mode must not render to stderr");
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(findings[0]["law"], "module_budget");
+    assert!(findings[0].get("suggested_fix").is_none());
+    // Default mode is unchanged: stderr render + full schema.
+    let out = veneer(dir.path(), &["check"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("module_budget"));
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(findings[0].get("suggested_fix").is_some());
+}
+
+#[test]
 fn malformed_config_fails_check_via_cli() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join(".veneer")).unwrap();
