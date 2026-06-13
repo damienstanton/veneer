@@ -226,7 +226,19 @@ fn mcp_check_findings_are_compact() {
     let out = child.wait_with_output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("module_budget"), "expected a budget finding in: {text}");
-    assert!(!text.contains("suggested_fix"), "MCP findings must be compact: {text}");
+    // Find the tools/call response (id 2) and parse its embedded findings text.
+    let resp = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["id"] == 2)
+        .expect("tools/call response present");
+    let payload = resp["result"]["content"][0]["text"]
+        .as_str()
+        .expect("content text present");
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_str(payload).expect("payload is a JSON array of findings");
+    assert_eq!(findings[0]["law"], "module_budget");
+    assert!(findings[0].get("suggested_fix").is_none(), "MCP findings must be compact: {payload}");
 }
 
 #[test]
@@ -237,4 +249,17 @@ fn malformed_config_fails_check_via_cli() {
     let out = veneer(dir.path(), &["check"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stdout).contains("malformed config"));
+}
+
+#[test]
+fn compact_check_honors_malformed_config() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/config.toml"), "loc_soft = \"oops").unwrap();
+    let out = veneer(dir.path(), &["check", "--compact"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty(), "compact mode must not render to stderr");
+    let findings: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(findings[0]["law"], "protocol");
+    assert!(findings[0].get("suggested_fix").is_none());
 }

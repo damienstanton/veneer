@@ -496,7 +496,9 @@ pub fn findings_json_compact(findings: &[Finding]) -> String {
     let mut v = serde_json::to_value(findings).expect("findings serialization is infallible");
     if let Some(arr) = v.as_array_mut() {
         for f in arr {
-            f.as_object_mut().map(|m| m.remove("suggested_fix"));
+            if let Some(m) = f.as_object_mut() {
+                m.remove("suggested_fix");
+            }
         }
     }
     v.to_string()
