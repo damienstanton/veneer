@@ -5,8 +5,11 @@
 //! ownership (affine) coherence (basis §VII). Errors are data: every failure is
 //! a Finding, never a panic.
 
-use crate::laws::{Finding, Law, Severity};
+use crate::laws::{Finding, Law, OxidizeConfig, Severity};
 use serde::Deserialize;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 const SHADOW_LABEL: &str = "<shadow>";
 const OX_FIX: &str =
@@ -77,4 +80,116 @@ pub fn parse_diagnostics(stdout: &str) -> Vec<Finding> {
         a.location.line.cmp(&b.location.line).then_with(|| a.message.cmp(&b.message))
     });
     findings
+}
+
+const SCRATCH_DIR: &str = ".veneer/oxidize";
+
+/// Why a cargo run did not produce diagnostics. Errors as data.
+enum RunErr {
+    Spawn(String),
+    Timeout(u64),
+}
+
+fn cargo_toml(edition: &str) -> String {
+    format!(
+        "[package]\nname = \"veneer_oxidize_scratch\"\nversion = \"0.0.0\"\nedition = \"{edition}\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+    )
+}
+
+/// Ensure the scratch crate exists; on first creation, cold-prime it (one-time
+/// generous budget) so the first real oxidation is warm. Idempotent.
+fn scaffold(root: &Path, cfg: &OxidizeConfig) -> Result<(), RunErr> {
+    let dir = root.join(SCRATCH_DIR);
+    let manifest = dir.join("Cargo.toml");
+    if manifest.exists() {
+        return Ok(());
+    }
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| RunErr::Spawn(e.to_string()))?;
+    std::fs::write(&manifest, cargo_toml(&cfg.edition)).map_err(|e| RunErr::Spawn(e.to_string()))?;
+    std::fs::write(src.join("lib.rs"), "").map_err(|e| RunErr::Spawn(e.to_string()))?;
+    run_check(&manifest, cfg.cold_timeout_ms)?; // cold prime; discard output
+    Ok(())
+}
+
+fn write_shadow(root: &Path, shadow: &str) -> Result<(), RunErr> {
+    let p = root.join(SCRATCH_DIR).join("src/lib.rs");
+    std::fs::write(p, shadow).map_err(|e| RunErr::Spawn(e.to_string()))
+}
+
+/// Run `cargo check --message-format=json` with a wall-clock cap. Captures
+/// stdout (the JSON stream); cargo's human progress on stderr is discarded.
+/// A reader thread drains stdout so a full pipe can never deadlock the wait
+/// loop.
+fn run_check(manifest: &Path, timeout_ms: u64) -> Result<String, RunErr> {
+    let mut child = Command::new("cargo")
+        .arg("check")
+        .arg("--manifest-path")
+        .arg(manifest)
+        .arg("--message-format=json")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| RunErr::Spawn(e.to_string()))?;
+    let mut out = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        s
+    });
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err(RunErr::Timeout(timeout_ms));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(RunErr::Spawn(e.to_string())),
+        }
+    }
+    Ok(reader.join().unwrap_or_default())
+}
+
+fn run_err_finding(e: RunErr) -> Finding {
+    match e {
+        RunErr::Spawn(msg) => Finding::error(
+            Law::Protocol,
+            SHADOW_LABEL,
+            None,
+            &format!("oxidation could not run cargo: {msg}"),
+            Some("ensure cargo is installed and .veneer/oxidize is writable"),
+        ),
+        RunErr::Timeout(ms) => Finding::error(
+            Law::Protocol,
+            SHADOW_LABEL,
+            None,
+            &format!("oxidation timed out after {ms}ms"),
+            Some("simplify the shadow or raise [oxidize] steady_timeout_ms"),
+        ),
+    }
+}
+
+/// Oxidize: compile the agent-authored shadow against the scratch crate and
+/// return Oxidation findings (empty = type-coherent). Run failures (cargo
+/// missing, timeout, unwritable scratch) are Protocol findings — outside the
+/// deterministic envelope.
+pub fn oxidize(root: &Path, shadow: &str, cfg: &OxidizeConfig) -> Vec<Finding> {
+    if let Err(e) = scaffold(root, cfg) {
+        return vec![run_err_finding(e)];
+    }
+    if let Err(e) = write_shadow(root, shadow) {
+        return vec![run_err_finding(e)];
+    }
+    let manifest = root.join(SCRATCH_DIR).join("Cargo.toml");
+    match run_check(&manifest, cfg.steady_timeout_ms) {
+        Ok(stdout) => parse_diagnostics(&stdout),
+        Err(e) => vec![run_err_finding(e)],
+    }
 }
