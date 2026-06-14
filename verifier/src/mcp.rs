@@ -21,6 +21,12 @@ pub struct CheckArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct OxidizeArgs {
+    /// The Rust shadow skeleton to type-check.
+    pub shadow: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct StateArgs {
     /// "get", "set", or "reset"
     pub action: String,
@@ -61,6 +67,18 @@ impl VeneerServer {
             }
         }
         let findings = run_checks(&self.root, &paths, args.0.diff.as_deref(), &cfg);
+        CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
+    }
+
+    #[tool(description = "Type-check an agent-authored Rust shadow skeleton (oxidation). Returns a JSON array of Oxidation findings; empty means type-coherent.")]
+    fn veneer_oxidize(&self, args: Parameters<OxidizeArgs>) -> CallToolResult {
+        let cfg = match load_config(&self.root) {
+            Ok(c) => c,
+            Err(f) => {
+                return CallToolResult::success(vec![Content::text(findings_json_compact(&[f]))])
+            }
+        };
+        let findings = crate::oxidize::oxidize(&self.root, &args.0.shadow, &cfg.oxidize);
         CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
     }
 
