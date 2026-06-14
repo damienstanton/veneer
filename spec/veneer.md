@@ -93,7 +93,8 @@ warnings reappear on the next tree or config change.
 `veneer oxidize` lifts an agent-authored Rust *shadow skeleton* into the Rust
 type system: the shadow is written to a persistent scratch crate
 (`.veneer/oxidize/`, ignored via `.veneer/` and skipped by the walker), checked
-with `cargo check --message-format=json`, and discarded. rustc diagnostics
+with `cargo check --message-format=json`. The shadow is never retained as an
+artifact — it is overwritten on the next run. rustc diagnostics
 become `Law::Oxidation` findings (`location.path` is the stable label
 `<shadow>`; `line` indexes the shadow). Two wall-clock caps from the `[oxidize]`
 config section bound the run: `steady_timeout_ms` (default 2000) on warm

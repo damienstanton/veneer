@@ -1,7 +1,9 @@
 //! Oxidation: transient Rust type-check of an agent-authored shadow skeleton.
 //! The shadow is compiled against a persistent scratch crate (.veneer/oxidize/);
-//! rustc diagnostics become Law::Oxidation findings, then the shadow is
-//! discarded. A second verifier beside the CTT kernel — rustc judges type and
+//! rustc diagnostics become Law::Oxidation findings; the shadow is never
+//! retained as an artifact (it is overwritten on the next run, and the scratch
+//! crate is gitignored and skipped by the walker). A second verifier beside the
+//! CTT kernel — rustc judges type and
 //! ownership (affine) coherence (basis §VII). Errors are data: every failure is
 //! a Finding, never a panic.
 
