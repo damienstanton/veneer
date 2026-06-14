@@ -65,3 +65,10 @@ fn propose_diff_runs_the_laws() {
         other => panic!("expected Findings, got {other:?}"),
     }
 }
+
+#[test]
+fn oxidize_intent_roundtrips() {
+    let json = r#"{"intent":"oxidize","shadow":"pub fn f() {}\n"}"#;
+    let parsed = parse_intent(json).unwrap();
+    assert_eq!(parsed, AgentIntent::Oxidize { shadow: "pub fn f() {}\n".into() });
+}

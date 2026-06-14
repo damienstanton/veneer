@@ -15,6 +15,8 @@ pub enum AgentIntent {
     ProposeDiff { patch: String },
     /// Request the ship gate.
     Conclude { summary: String },
+    /// Type-check an agent-authored Rust shadow skeleton (oxidation).
+    Oxidize { shadow: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,5 +73,8 @@ pub fn execute(root: &Path, intent: AgentIntent, cfg: &Config) -> Outcome {
             Ok(_) => Outcome::Concluded(summary),
             Err(f) => Outcome::Findings(vec![f]),
         },
+        AgentIntent::Oxidize { shadow } => {
+            Outcome::Findings(crate::oxidize::oxidize(root, &shadow, &cfg.oxidize))
+        }
     }
 }
