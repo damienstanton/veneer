@@ -11,6 +11,7 @@ pub enum Law {
     ModuleSealing,
     Idempotency,
     Protocol,
+    Oxidation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +83,8 @@ pub struct Config {
     /// include the trailing '/' for directory entries.
     #[serde(default)]
     pub loc_exclude: Vec<String>,
+    #[serde(default)]
+    pub oxidize: OxidizeConfig,
 }
 
 fn default_soft() -> u32 { 500 }
@@ -91,7 +94,31 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             loc_soft: 500, loc_hard: 1000, modules: Vec::new(), loc_exclude: Vec::new(),
+            oxidize: OxidizeConfig::default(),
         }
+    }
+}
+
+/// Oxidation settings (the `[oxidize]` TOML section). Timeouts are wall-clock
+/// caps on the scratch-crate cargo run; `edition`/`deps` are pass-through hooks
+/// (deps unused in v1).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OxidizeConfig {
+    #[serde(default = "default_edition")]
+    pub edition: String,
+    #[serde(default = "default_steady")]
+    pub steady_timeout_ms: u64,
+    #[serde(default = "default_cold")]
+    pub cold_timeout_ms: u64,
+}
+
+fn default_edition() -> String { "2021".into() }
+fn default_steady() -> u64 { 2000 }
+fn default_cold() -> u64 { 30000 }
+
+impl Default for OxidizeConfig {
+    fn default() -> OxidizeConfig {
+        OxidizeConfig { edition: "2021".into(), steady_timeout_ms: 2000, cold_timeout_ms: 30000 }
     }
 }
 
