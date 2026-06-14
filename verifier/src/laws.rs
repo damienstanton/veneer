@@ -100,8 +100,9 @@ impl Default for Config {
 }
 
 /// Oxidation settings (the `[oxidize]` TOML section). Timeouts are wall-clock
-/// caps on the scratch-crate cargo run; `edition`/`deps` are pass-through hooks
-/// (deps unused in v1).
+/// caps on the scratch-crate cargo run; `edition` selects the scratch crate's
+/// Rust edition. (A `deps` pass-through is reserved for a later iteration and is
+/// not yet a field.)
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct OxidizeConfig {
     #[serde(default = "default_edition")]
@@ -118,7 +119,11 @@ fn default_cold() -> u64 { 30000 }
 
 impl Default for OxidizeConfig {
     fn default() -> OxidizeConfig {
-        OxidizeConfig { edition: "2021".into(), steady_timeout_ms: 2000, cold_timeout_ms: 30000 }
+        OxidizeConfig {
+            edition: default_edition(),
+            steady_timeout_ms: default_steady(),
+            cold_timeout_ms: default_cold(),
+        }
     }
 }
 
