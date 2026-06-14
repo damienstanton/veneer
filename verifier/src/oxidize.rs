@@ -106,8 +106,11 @@ fn scaffold(root: &Path, cfg: &OxidizeConfig) -> Result<(), RunErr> {
     }
     let src = dir.join("src");
     std::fs::create_dir_all(&src).map_err(|e| RunErr::Spawn(e.to_string()))?;
-    std::fs::write(&manifest, cargo_toml(&cfg.edition)).map_err(|e| RunErr::Spawn(e.to_string()))?;
+    // Write the source first; the manifest is written last so that its presence
+    // (the idempotency sentinel above) implies the source already exists — a
+    // kill mid-scaffold cannot leave a manifest without its lib.rs.
     std::fs::write(src.join("lib.rs"), "").map_err(|e| RunErr::Spawn(e.to_string()))?;
+    std::fs::write(&manifest, cargo_toml(&cfg.edition)).map_err(|e| RunErr::Spawn(e.to_string()))?;
     run_check(&manifest, cfg.cold_timeout_ms)?; // cold prime; discard output
     Ok(())
 }
