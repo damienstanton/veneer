@@ -43,8 +43,9 @@ omitted; per-law fix guidance lives in the skill.
 
     veneer init [--link <skill-src-dir>]   # config + skill into .claude/ and .agents/
     veneer check [--compact] [--diff <file>] [--intent <file>] [paths...]
+    veneer oxidize [--compact] [--file <shadow.rs>]   # transient Rust type-check
     veneer state get|reset|set <phase> [--ref k=v ...]
-    veneer mcp                              # veneer_check / veneer_state over stdio
+    veneer mcp                              # veneer_check / veneer_state / veneer_oxidize over stdio
 
 `--link <skill-src-dir>` creates a symlink from `.claude/skills/veneer` (and
 `.agents/skills/veneer`) to the given source directory; without `--link` the
@@ -61,6 +62,7 @@ findings are always compact. State responses (CLI and MCP) carry `phase` and
     {"intent": "expand_context", "query": <path>}     → file contents | findings
     {"intent": "propose_diff",   "patch": <unified>}  → findings
     {"intent": "conclude",       "summary": <text>}   → ship gate | findings
+    {"intent": "oxidize",        "shadow": <rust>}    → findings (Law::Oxidation)
 
 ## State file
 
@@ -85,3 +87,16 @@ recorded one: the deterministic verdict is already known, so the laws are
 not re-run and `[]` is emitted. A warning-only run records the witness too
 (warnings are shippable), so a re-check of an unchanged tree reports `[]`;
 warnings reappear on the next tree or config change.
+
+## Oxidation
+
+`veneer oxidize` lifts an agent-authored Rust *shadow skeleton* into the Rust
+type system: the shadow is written to a persistent scratch crate
+(`.veneer/oxidize/`, ignored via `.veneer/` and skipped by the walker), checked
+with `cargo check --message-format=json`, and discarded. rustc diagnostics
+become `Law::Oxidation` findings (`location.path` is the stable label
+`<shadow>`; `line` indexes the shadow). Two wall-clock caps from the `[oxidize]`
+config section bound the run: `steady_timeout_ms` (default 2000) on warm
+incremental checks and `cold_timeout_ms` (default 30000) on the one-time
+scaffold prime; a timeout is a Protocol finding. Oxidation is a check within the
+existing phases, not a new phase.
