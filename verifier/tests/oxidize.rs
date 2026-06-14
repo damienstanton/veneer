@@ -69,7 +69,7 @@ fn cargo_available() -> bool {
 }
 
 fn ox(root: &Path, shadow: &str) -> Vec<veneer::laws::Finding> {
-    veneer::oxidize::oxidize(root, shadow, &veneer::laws::OxidizeConfig::default())
+    veneer::oxidize::oxidize(root, shadow, &veneer::oxidize::OxidizeConfig::default())
 }
 
 #[test]

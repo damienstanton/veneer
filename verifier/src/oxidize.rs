@@ -5,7 +5,7 @@
 //! ownership (affine) coherence (basis §VII). Errors are data: every failure is
 //! a Finding, never a panic.
 
-use crate::laws::{Finding, Law, OxidizeConfig, Severity};
+use crate::laws::{Finding, Law, Severity};
 use serde::Deserialize;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -14,6 +14,34 @@ use std::time::{Duration, Instant};
 const SHADOW_LABEL: &str = "<shadow>";
 const OX_FIX: &str =
     "fix the type/ownership story of the proposed code (keep the shadow faithful to it), then re-oxidize";
+
+/// Oxidation settings (the `[oxidize]` TOML section, surfaced on `Config`).
+/// Timeouts are wall-clock caps on the scratch-crate cargo run; `edition`
+/// selects the scratch crate's Rust edition. (A `deps` pass-through is reserved
+/// for a later iteration and is not yet a field.)
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OxidizeConfig {
+    #[serde(default = "default_edition")]
+    pub edition: String,
+    #[serde(default = "default_steady")]
+    pub steady_timeout_ms: u64,
+    #[serde(default = "default_cold")]
+    pub cold_timeout_ms: u64,
+}
+
+fn default_edition() -> String { "2021".into() }
+fn default_steady() -> u64 { 2000 }
+fn default_cold() -> u64 { 30000 }
+
+impl Default for OxidizeConfig {
+    fn default() -> OxidizeConfig {
+        OxidizeConfig {
+            edition: default_edition(),
+            steady_timeout_ms: default_steady(),
+            cold_timeout_ms: default_cold(),
+        }
+    }
+}
 
 /// One line of `cargo check --message-format=json`. Unknown fields ignored.
 #[derive(Deserialize)]

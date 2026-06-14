@@ -1,4 +1,5 @@
-use veneer::laws::{Config, Law, OxidizeConfig};
+use veneer::laws::{Config, Law};
+use veneer::oxidize::OxidizeConfig;
 
 #[test]
 fn oxidation_law_serializes_snake_case() {

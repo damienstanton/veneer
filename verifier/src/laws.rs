@@ -84,7 +84,7 @@ pub struct Config {
     #[serde(default)]
     pub loc_exclude: Vec<String>,
     #[serde(default)]
-    pub oxidize: OxidizeConfig,
+    pub oxidize: crate::oxidize::OxidizeConfig,
 }
 
 fn default_soft() -> u32 { 500 }
@@ -94,35 +94,7 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             loc_soft: 500, loc_hard: 1000, modules: Vec::new(), loc_exclude: Vec::new(),
-            oxidize: OxidizeConfig::default(),
-        }
-    }
-}
-
-/// Oxidation settings (the `[oxidize]` TOML section). Timeouts are wall-clock
-/// caps on the scratch-crate cargo run; `edition` selects the scratch crate's
-/// Rust edition. (A `deps` pass-through is reserved for a later iteration and is
-/// not yet a field.)
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct OxidizeConfig {
-    #[serde(default = "default_edition")]
-    pub edition: String,
-    #[serde(default = "default_steady")]
-    pub steady_timeout_ms: u64,
-    #[serde(default = "default_cold")]
-    pub cold_timeout_ms: u64,
-}
-
-fn default_edition() -> String { "2021".into() }
-fn default_steady() -> u64 { 2000 }
-fn default_cold() -> u64 { 30000 }
-
-impl Default for OxidizeConfig {
-    fn default() -> OxidizeConfig {
-        OxidizeConfig {
-            edition: default_edition(),
-            steady_timeout_ms: default_steady(),
-            cold_timeout_ms: default_cold(),
+            oxidize: crate::oxidize::OxidizeConfig::default(),
         }
     }
 }
