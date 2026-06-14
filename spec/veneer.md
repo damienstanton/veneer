@@ -29,7 +29,7 @@ one (see State file — the witness covers both the tree and the config).
 JSON array on stdout; human rendering on stderr.
 
     {
-      "law": "module_budget" | "module_sealing" | "idempotency" | "protocol",
+      "law": "module_budget" | "module_sealing" | "idempotency" | "protocol" | "oxidation",
       "severity": "error" | "warning",
       "location": { "path": string, "line"?: number },
       "message": string,            // deterministic for identical input
@@ -43,8 +43,9 @@ omitted; per-law fix guidance lives in the skill.
 
     veneer init [--link <skill-src-dir>]   # config + skill into .claude/ and .agents/
     veneer check [--compact] [--diff <file>] [--intent <file>] [paths...]
+    veneer oxidize [--compact] [--file <shadow.rs>]   # transient Rust type-check
     veneer state get|reset|set <phase> [--ref k=v ...]
-    veneer mcp                              # veneer_check / veneer_state over stdio
+    veneer mcp                              # veneer_check / veneer_state / veneer_oxidize over stdio
 
 `--link <skill-src-dir>` creates a symlink from `.claude/skills/veneer` (and
 `.agents/skills/veneer`) to the given source directory; without `--link` the
@@ -61,6 +62,7 @@ findings are always compact. State responses (CLI and MCP) carry `phase` and
     {"intent": "expand_context", "query": <path>}     → file contents | findings
     {"intent": "propose_diff",   "patch": <unified>}  → findings
     {"intent": "conclude",       "summary": <text>}   → ship gate | findings
+    {"intent": "oxidize",        "shadow": <rust>}    → findings (Law::Oxidation)
 
 ## State file
 
@@ -85,3 +87,27 @@ recorded one: the deterministic verdict is already known, so the laws are
 not re-run and `[]` is emitted. A warning-only run records the witness too
 (warnings are shippable), so a re-check of an unchanged tree reports `[]`;
 warnings reappear on the next tree or config change.
+
+## Oxidation
+
+`veneer oxidize` lifts an agent-authored Rust *shadow skeleton* into the Rust
+type system: the shadow is written to a persistent scratch crate
+(`.veneer/oxidize/`, ignored via `.veneer/` and skipped by the walker), checked
+with `cargo check --message-format=json`. The shadow is never retained as an
+artifact — it is overwritten on the next run. rustc diagnostics
+become `Law::Oxidation` findings (`location.path` is the stable label
+`<shadow>`; `line` indexes the shadow). Two wall-clock caps from the `[oxidize]`
+config section bound the run: `steady_timeout_ms` (default 2000) on warm
+incremental checks and `cold_timeout_ms` (default 30000) on the one-time
+scaffold prime; a timeout is a Protocol finding. Oxidation is a check within the
+existing phases, not a new phase.
+
+**Trust boundary.** Oxidation runs `cargo check` on the supplied shadow, and a
+`cargo check` *executes code*: built-in macros (`include_str!`, `env!`) and any
+procedural macros expand at check time and can read files or the environment and
+surface that content in diagnostics. The shadow is therefore trusted input — at
+the same level as the source the agent already writes and compiles in the
+project. The `edition` is validated against a fixed allowlist (2015/2018/2021/
+2024) so a config value cannot inject extra manifest sections, but the shadow
+body itself is not sandboxed. Do not feed an untrusted party's Rust through the
+`veneer_oxidize` MCP tool without an external sandbox.

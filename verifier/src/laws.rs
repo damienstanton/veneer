@@ -11,6 +11,7 @@ pub enum Law {
     ModuleSealing,
     Idempotency,
     Protocol,
+    Oxidation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +83,8 @@ pub struct Config {
     /// include the trailing '/' for directory entries.
     #[serde(default)]
     pub loc_exclude: Vec<String>,
+    #[serde(default)]
+    pub oxidize: crate::oxidize::OxidizeConfig,
 }
 
 fn default_soft() -> u32 { 500 }
@@ -91,6 +94,7 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             loc_soft: 500, loc_hard: 1000, modules: Vec::new(), loc_exclude: Vec::new(),
+            oxidize: crate::oxidize::OxidizeConfig::default(),
         }
     }
 }

@@ -49,9 +49,9 @@ judge; you are the prover. Trust your own planning; let the binary verify.
 ## The laws, operationally
 
 **Finding schema** (what `veneer check --compact` emits, one JSON array on
-stdout): `law` (module_budget | module_sealing | idempotency | protocol),
-`severity` (error | warning), `location` {path, line?}, `message`. (Without
-`--compact`, findings also carry `suggested_fix` and render on stderr.)
+stdout): `law` (module_budget | module_sealing | idempotency | protocol |
+oxidation), `severity` (error | warning), `location` {path, line?}, `message`.
+(Without `--compact`, findings also carry `suggested_fix` and render on stderr.)
 
 **module_budget** — a module (file) exceeds the LoC band. Warning >500 is
 pressure: prefer splitting when natural. Error >1000 blocks: split before
@@ -71,6 +71,13 @@ Anchor insertions to unique context lines so re-application fails cleanly.
 **protocol** — you stepped outside the envelope (malformed intent, invalid
 transition, stale ship gate, unreadable state). The message says exactly how
 to get back in.
+
+**oxidation** — rustc rejected the type or ownership (affine) story of your
+proposed code, expressed as a Rust shadow skeleton. The `location.line` points
+into the shadow you authored. Fix the *real* design the shadow models — keep the
+shadow faithful to it, don't just patch the shadow to compile — then re-oxidize
+(`veneer oxidize --file <shadow.rs>`). It is an on-demand check; running it
+during implement (before writing the real code) or verify is encouraged.
 
 ## Phase: plan
 
@@ -105,7 +112,10 @@ The synthesis envelope.
 4. Write tests alongside (test files are modules too).
 5. Run `veneer check --compact` early and often; it is cheap, deterministic,
    and free on an unchanged clean tree.
-6. When the feature is written and local tests pass:
+6. Optional but encouraged: oxidize a Rust shadow skeleton of any non-trivial
+   resource/ownership protocol (`veneer oxidize --file <shadow.rs>`) to catch
+   use-after-move and aliasing bugs before they reach the real code.
+7. When the feature is written and local tests pass:
    `veneer state set verify`.
 
 ## Phase: verify

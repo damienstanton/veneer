@@ -349,3 +349,25 @@ fn compact_check_honors_malformed_config() {
     assert_eq!(findings[0]["law"], "protocol");
     assert!(findings[0].get("suggested_fix").is_none());
 }
+
+#[test]
+fn oxidize_from_file_prints_a_json_findings_array() {
+    // Exercises the --file arg plumbing: a shadow read from a file produces a
+    // findings array on stdout (empty when coherent + cargo present; a single
+    // protocol finding when cargo is absent — either way, a valid JSON array).
+    let dir = tempfile::tempdir().unwrap();
+    let shadow = dir.path().join("good.rs");
+    std::fs::write(&shadow, "pub fn f() {}\n").unwrap();
+    let out = veneer(dir.path(), &["oxidize", "--file", shadow.to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| panic!("stdout not JSON ({e}): {stdout}"));
+    assert!(parsed.is_array(), "stdout is not a JSON array: {stdout}");
+}
+
+#[test]
+fn oxidize_missing_file_is_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = veneer(dir.path(), &["oxidize", "--file", "/no/such/shadow.rs"]);
+    assert_eq!(out.status.code(), Some(2));
+}
