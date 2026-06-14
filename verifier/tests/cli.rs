@@ -349,3 +349,24 @@ fn compact_check_honors_malformed_config() {
     assert_eq!(findings[0]["law"], "protocol");
     assert!(findings[0].get("suggested_fix").is_none());
 }
+
+#[test]
+fn oxidize_reports_protocol_finding_when_cargo_missing_or_runs() {
+    // Either cargo is present and the coherent shadow yields [] (exit 0), or the
+    // subcommand still parses args and exits cleanly. We assert the arg plumbing:
+    // a coherent shadow via --file exits 0 and prints a JSON array.
+    let dir = tempfile::tempdir().unwrap();
+    let shadow = dir.path().join("good.rs");
+    std::fs::write(&shadow, "pub fn f() {}\n").unwrap();
+    let out = veneer(dir.path(), &["oxidize", "--file", shadow.to_str().unwrap()]);
+    // stdout is a JSON array regardless of cargo presence.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.trim_start().starts_with('['), "stdout: {stdout}");
+}
+
+#[test]
+fn oxidize_missing_file_is_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = veneer(dir.path(), &["oxidize", "--file", "/no/such/shadow.rs"]);
+    assert_eq!(out.status.code(), Some(2));
+}

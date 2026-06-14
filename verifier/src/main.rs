@@ -11,6 +11,7 @@ veneer — minimal CTT-grounded agentic harness
 USAGE:
   veneer init [--link <skill-src-dir>]
   veneer check [--compact] [--diff <patch-file>] [--intent <intent.json>] [paths...]
+  veneer oxidize [--compact] [--file <shadow.rs>]   # type-check a Rust shadow (reads stdin if no --file)
   veneer state get | set <phase> [--ref k=v ...] | reset
   veneer mcp
 ";
@@ -171,6 +172,56 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
     code
 }
 
+fn cmd_oxidize(root: &Path, args: &[String]) -> i32 {
+    let mut file: Option<String> = None;
+    let mut compact = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--compact" => {
+                compact = true;
+                i += 1;
+            }
+            "--file" => {
+                let Some(f) = args.get(i + 1) else {
+                    eprintln!("{USAGE}");
+                    return 2;
+                };
+                file = Some(f.clone());
+                i += 2;
+            }
+            _ => {
+                eprintln!("{USAGE}");
+                return 2;
+            }
+        }
+    }
+    let shadow = match file {
+        Some(f) => match std::fs::read_to_string(&f) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("error: cannot read {f}");
+                return 2;
+            }
+        },
+        None => {
+            use std::io::Read;
+            let mut s = String::new();
+            if std::io::stdin().read_to_string(&mut s).is_err() {
+                eprintln!("error: cannot read stdin");
+                return 2;
+            }
+            s
+        }
+    };
+    let cfg = match load_config(root) {
+        Ok(c) => c,
+        Err(f) => return if compact { emit_compact(&[f]) } else { emit(&[f]) },
+    };
+    let findings = veneer::oxidize::oxidize(root, &shadow, &cfg.oxidize);
+    if compact { emit_compact(&findings) } else { emit(&findings) }
+}
+
 fn cmd_intent(root: &Path, contents: &str, cfg: &veneer::laws::Config) -> i32 {
     match parse_intent(contents) {
         Err(f) => emit(&[f]),
@@ -265,6 +316,7 @@ fn main() {
             }
         }
         Some("check") => cmd_check(&root, &args[1..]),
+        Some("oxidize") => cmd_oxidize(&root, &args[1..]),
         Some("state") => cmd_state(&root, &args[1..]),
         Some("mcp") => veneer::mcp::serve(root.clone()),
         _ => {
