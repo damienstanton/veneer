@@ -29,7 +29,7 @@ one (see State file — the witness covers both the tree and the config).
 JSON array on stdout; human rendering on stderr.
 
     {
-      "law": "module_budget" | "module_sealing" | "idempotency" | "protocol",
+      "law": "module_budget" | "module_sealing" | "idempotency" | "protocol" | "oxidation",
       "severity": "error" | "warning",
       "location": { "path": string, "line"?: number },
       "message": string,            // deterministic for identical input
@@ -101,3 +101,13 @@ config section bound the run: `steady_timeout_ms` (default 2000) on warm
 incremental checks and `cold_timeout_ms` (default 30000) on the one-time
 scaffold prime; a timeout is a Protocol finding. Oxidation is a check within the
 existing phases, not a new phase.
+
+**Trust boundary.** Oxidation runs `cargo check` on the supplied shadow, and a
+`cargo check` *executes code*: built-in macros (`include_str!`, `env!`) and any
+procedural macros expand at check time and can read files or the environment and
+surface that content in diagnostics. The shadow is therefore trusted input — at
+the same level as the source the agent already writes and compiles in the
+project. The `edition` is validated against a fixed allowlist (2015/2018/2021/
+2024) so a config value cannot inject extra manifest sections, but the shadow
+body itself is not sandboxed. Do not feed an untrusted party's Rust through the
+`veneer_oxidize` MCP tool without an external sandbox.

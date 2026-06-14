@@ -214,6 +214,20 @@ fn run_err_finding(e: RunErr) -> Finding {
 /// missing, timeout, unwritable scratch) are Protocol findings — outside the
 /// deterministic envelope.
 pub fn oxidize(root: &Path, shadow: &str, cfg: &OxidizeConfig) -> Vec<Finding> {
+    // The edition is interpolated into the scratch crate's Cargo.toml, so it
+    // must be a known edition — an allowlist both catches typos and prevents an
+    // arbitrary config value from injecting extra TOML (e.g. a `[dependencies]`
+    // section that would change what `cargo check` resolves).
+    const EDITIONS: &[&str] = &["2015", "2018", "2021", "2024"];
+    if !EDITIONS.contains(&cfg.edition.as_str()) {
+        return vec![Finding::error(
+            Law::Protocol,
+            SHADOW_LABEL,
+            None,
+            &format!("invalid [oxidize] edition {:?}: expected one of 2015, 2018, 2021, 2024", cfg.edition),
+            Some("set a valid Rust edition in .veneer/config.toml"),
+        )];
+    }
     if let Err(e) = scaffold(root, cfg) {
         return vec![run_err_finding(e)];
     }

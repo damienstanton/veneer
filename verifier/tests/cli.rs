@@ -351,17 +351,18 @@ fn compact_check_honors_malformed_config() {
 }
 
 #[test]
-fn oxidize_reports_protocol_finding_when_cargo_missing_or_runs() {
-    // Either cargo is present and the coherent shadow yields [] (exit 0), or the
-    // subcommand still parses args and exits cleanly. We assert the arg plumbing:
-    // a coherent shadow via --file exits 0 and prints a JSON array.
+fn oxidize_from_file_prints_a_json_findings_array() {
+    // Exercises the --file arg plumbing: a shadow read from a file produces a
+    // findings array on stdout (empty when coherent + cargo present; a single
+    // protocol finding when cargo is absent — either way, a valid JSON array).
     let dir = tempfile::tempdir().unwrap();
     let shadow = dir.path().join("good.rs");
     std::fs::write(&shadow, "pub fn f() {}\n").unwrap();
     let out = veneer(dir.path(), &["oxidize", "--file", shadow.to_str().unwrap()]);
-    // stdout is a JSON array regardless of cargo presence.
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.trim_start().starts_with('['), "stdout: {stdout}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| panic!("stdout not JSON ({e}): {stdout}"));
+    assert!(parsed.is_array(), "stdout is not a JSON array: {stdout}");
 }
 
 #[test]

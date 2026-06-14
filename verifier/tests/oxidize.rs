@@ -72,6 +72,22 @@ fn ox(root: &Path, shadow: &str) -> Vec<veneer::laws::Finding> {
     veneer::oxidize::oxidize(root, shadow, &veneer::oxidize::OxidizeConfig::default())
 }
 
+// No cargo needed: edition validation rejects before any scratch-crate run.
+#[test]
+fn injecting_edition_is_rejected_as_protocol() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = veneer::oxidize::OxidizeConfig {
+        edition: "2021\"\n[dependencies]\nevil = \"1\"".into(),
+        steady_timeout_ms: 2000,
+        cold_timeout_ms: 30000,
+    };
+    let fs = veneer::oxidize::oxidize(dir.path(), "pub fn f() {}\n", &cfg);
+    assert_eq!(fs.len(), 1);
+    assert_eq!(fs[0].law, veneer::laws::Law::Protocol);
+    // Nothing was compiled, so no scratch crate was created.
+    assert!(!dir.path().join(".veneer/oxidize").exists());
+}
+
 #[test]
 fn coherent_shadow_has_no_findings() {
     if !cargo_available() {

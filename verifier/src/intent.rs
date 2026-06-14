@@ -34,7 +34,7 @@ pub fn parse_intent(s: &str) -> Result<AgentIntent, Finding> {
             "<intent>",
             None,
             &format!("malformed intent: {e}"),
-            Some(r#"emit {"intent":"expand_context"|"propose_diff"|"conclude", ...}"#),
+            Some(r#"emit {"intent":"expand_context"|"propose_diff"|"conclude"|"oxidize", ...}"#),
         )
     })
 }
