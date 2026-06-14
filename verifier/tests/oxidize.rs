@@ -57,3 +57,81 @@ fn findings_are_sorted_for_determinism() {
     assert_eq!(fs[0].location.line, Some(2));
     assert_eq!(fs[1].location.line, Some(9));
 }
+
+use std::path::Path;
+
+fn cargo_available() -> bool {
+    std::process::Command::new("cargo")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn ox(root: &Path, shadow: &str) -> Vec<veneer::laws::Finding> {
+    veneer::oxidize::oxidize(root, shadow, &veneer::laws::OxidizeConfig::default())
+}
+
+#[test]
+fn coherent_shadow_has_no_findings() {
+    if !cargo_available() {
+        eprintln!("skipping: cargo not on PATH");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let shadow = "pub fn add(a: u8, b: u8) -> u8 { a + b }\n";
+    assert!(ox(dir.path(), shadow).is_empty());
+}
+
+#[test]
+fn borrow_error_shadow_yields_one_oxidation_error() {
+    if !cargo_available() {
+        eprintln!("skipping: cargo not on PATH");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let shadow = "\
+fn close(c: Vec<u8>) { let _ = c; }
+pub fn bad() {
+    let c = vec![1u8];
+    close(c);
+    close(c);
+}
+";
+    let fs = ox(dir.path(), shadow);
+    let errors: Vec<_> = fs
+        .iter()
+        .filter(|f| f.law == veneer::laws::Law::Oxidation && f.severity == veneer::laws::Severity::Error)
+        .collect();
+    assert_eq!(errors.len(), 1, "got: {fs:?}");
+    assert!(errors[0].message.contains("moved"));
+}
+
+#[test]
+fn same_shadow_twice_is_byte_identical() {
+    if !cargo_available() {
+        eprintln!("skipping: cargo not on PATH");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let shadow = "pub fn f(x: bool) -> u8 { if x { 1 } }\n"; // missing else: type error
+    let a = serde_json::to_string(&ox(dir.path(), shadow)).unwrap();
+    let b = serde_json::to_string(&ox(dir.path(), shadow)).unwrap();
+    assert_eq!(a, b);
+    assert!(!a.is_empty() && a != "[]");
+}
+
+#[test]
+fn scratch_crate_is_invisible_to_run_checks() {
+    if !cargo_available() {
+        eprintln!("skipping: cargo not on PATH");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let _ = ox(dir.path(), "pub fn f() {}\n"); // creates .veneer/oxidize/
+    let cfg = veneer::laws::Config::default();
+    let findings = veneer::laws::run_checks(dir.path(), &[], None, &cfg);
+    // Nothing under .veneer/ is walked, so the (huge) target/ never trips the
+    // module budget and no oxidize file appears in any finding location.
+    assert!(findings.iter().all(|f| !f.location.path.contains("oxidize")), "got: {findings:?}");
+}
