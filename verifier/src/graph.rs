@@ -107,6 +107,18 @@ pub fn build(root: &Path, cfg: &Config) -> Result<Graph, Finding> {
     Ok(Graph { entries, built_from })
 }
 
+/// Build and persist the graph, best-effort: any failure (extraction, the
+/// oxidation run, or the write) is swallowed. This is the automatic,
+/// under-the-hood refresh invoked as a side effect of a clean full
+/// `veneer check`, so the cache stays fresh once per cycle without the agent
+/// running `graph build` explicitly. It returns nothing and never affects
+/// the caller's result — the graph stays orthogonal to findings and the gate.
+pub fn rebuild(root: &Path, cfg: &Config) {
+    if let Ok(g) = build(root, cfg) {
+        let _ = store(root, &g);
+    }
+}
+
 fn graph_path(root: &Path) -> std::path::PathBuf {
     root.join(".veneer/graph.toon")
 }

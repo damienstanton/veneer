@@ -170,6 +170,12 @@ fn cmd_check(root: &Path, args: &[String]) -> i32 {
             eprintln!("error [protocol] {}: {}", f.location.path, f.message);
             return 1;
         }
+        // ...and refreshes the knowledge graph: a transparent, best-effort
+        // side effect so the cache stays current once per cycle without an
+        // explicit `graph build`. Only reached when the tree changed (the
+        // clean-tree short-circuit returns earlier), and the rebuild never
+        // reads back into findings or the gate — the graph stays orthogonal.
+        veneer::graph::rebuild(root, &cfg);
     }
     code
 }
