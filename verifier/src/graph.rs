@@ -107,16 +107,33 @@ pub fn build(root: &Path, cfg: &Config) -> Result<Graph, Finding> {
     Ok(Graph { entries, built_from })
 }
 
-/// Build and persist the graph, best-effort: any failure (extraction, the
-/// oxidation run, or the write) is swallowed. This is the automatic,
-/// under-the-hood refresh invoked as a side effect of a clean full
-/// `veneer check`, so the cache stays fresh once per cycle without the agent
-/// running `graph build` explicitly. It returns nothing and never affects
-/// the caller's result — the graph stays orthogonal to findings and the gate.
+/// Runs `f`, catching and silently discarding any panic — including
+/// suppressing the panic hook's default stderr message, so nothing leaks out
+/// even to the terminal. `rebuild` relies on this: its call chain reaches
+/// `.expect()` on `toon_rust::to_string` (a crate that has already surfaced
+/// two real, surprising encoding bugs this session — see the `ascii_safe`
+/// and `FlatFinding` workarounds), so "best-effort, swallowed" must hold even
+/// against a failure mode neither of us has seen yet.
+pub fn catch_and_silence<F: FnOnce() + std::panic::UnwindSafe>(f: F) {
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let _ = std::panic::catch_unwind(f);
+    std::panic::set_hook(prev_hook);
+}
+
+/// Build and persist the graph, best-effort: any failure or panic
+/// (extraction, the oxidation run, or the write) is swallowed. This is the
+/// automatic, under-the-hood refresh invoked as a side effect of a clean
+/// full `veneer check`, so the cache stays fresh once per cycle without the
+/// agent running `graph build` explicitly. It returns nothing and never
+/// affects the caller's result — the graph stays orthogonal to findings and
+/// the gate, even if something inside panics.
 pub fn rebuild(root: &Path, cfg: &Config) {
-    if let Ok(g) = build(root, cfg) {
-        let _ = store(root, &g);
-    }
+    catch_and_silence(|| {
+        if let Ok(g) = build(root, cfg) {
+            let _ = store(root, &g);
+        }
+    });
 }
 
 fn graph_path(root: &Path) -> std::path::PathBuf {
