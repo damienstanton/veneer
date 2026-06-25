@@ -23,12 +23,15 @@ The repository has three layers:
 
 **`spec/`** — normative contracts. `spec/veneer.md` is the harness contract (laws, lifecycle, finding schema, binary surface, state file). `spec/basis.md` is the CTT formal foundation. Read these before changing law semantics.
 
-**`verifier/`** — the Rust binary (`veneer`). One crate, five modules:
+**`verifier/`** — the Rust binary (`veneer`). One crate, nine modules:
 - `kernel` — the CTT `Expr` ADT, gas-bounded `eval`, and `check_eq` (judgemental equality). Used only for lifting FNV hashes into canonical forms to verify idempotency. No law logic lives here.
 - `laws` — the three laws as deterministic checks, plus the `Finding` value type, `Config` (from `.veneer/config.toml`), file walker, patch parser/applier, and `run_checks` orchestrator. The authoritative output surface: every veneer result is a `Finding`.
 - `state` — the lifecycle state machine (Plan → Implement → Verify → Ship) with a content-hashed, crash-atomic state file. The ship gate: `set_phase(Verify→Ship)` only if `last_clean_check` matches the current `clean_hash`.
-- `intent` — the `AgentIntent` ADT (expand_context / propose_diff / conclude) dispatched by `--intent` and MCP.
-- `mcp` — thin MCP adapter over `laws` and `state` (`veneer_check` and `veneer_state` tools, served over stdio via `rmcp`).
+- `oxidize` — transient Rust shadow type-check: writes an agent-authored (or graph-lifted) shadow to a persistent scratch crate and turns `cargo check` diagnostics into `Law::Oxidation` findings.
+- `graph` — the codebase knowledge graph: heuristic per-file signatures/docs/LoC/complexity (any language), plus, for Rust files, semantic findings from running a lifted shadow (see `graph_lift`) through `oxidize`. Cached in `.veneer/graph.toon`, its own witness, orthogonal to the ship gate.
+- `graph_lift` — crate-private: the generic-erasure engine that turns extracted `pub fn` signatures into a self-contained, type-erased Rust program preserving their ownership/borrowing shape. Re-exported as `graph::lift_shadow`; no dependency on `graph`'s persistence or extraction concerns.
+- `intent` — the `AgentIntent` ADT (expand_context / propose_diff / conclude / oxidize / query_graph) dispatched by `--intent` and MCP.
+- `mcp` — thin MCP adapter over `laws`, `state`, `oxidize`, and `graph` (`veneer_check`, `veneer_state`, `veneer_oxidize`, `veneer_graph` tools, served over stdio via `rmcp`).
 - `main` — CLI dispatch only; no logic.
 
 **`skill/veneer/SKILL.md`** — the agent-facing skill. `main.rs` embeds it with `include_str!` so it is always in sync with the binary. `veneer init` writes it to `.claude/skills/veneer/` and `.agents/skills/veneer/`.
@@ -41,6 +44,8 @@ The repository has three layers:
 - **Walker skips**: `.git`, `.veneer`, `target`, `node_modules`, `.claude`, `.agents` (dirs); `*.lock`, `package-lock.json`, `pnpm-lock.yaml` (generated files). Lockfiles never count toward LoC budget or tree hash.
 - **`loc_exclude`**: entries starting with `.` are extension suffixes; all others are root-relative path prefixes (include trailing `/` for directories). Excluded files still participate in sealing, idempotency, and the tree hash — only the budget check skips them.
 - **State file integrity**: `.veneer/state.toon` (TOON-encoded) embeds an FNV-1a content hash (`hash: fnv:<hex>`) taken over the state's canonical JSON form, so the witness is format-independent; `load` rejects mismatches as a Protocol finding. A legacy `.veneer/state.json` is read as a fallback and migrated to TOON (legacy file removed) on the next write — seamless and invisible. `veneer state get --json` decodes the full stored state to readable JSON on demand. Never edit by hand; use `veneer state`.
+- **Knowledge graph is orthogonal to the gate**: `.veneer/graph.toon` has its own integrity witness and its own staleness witness (`built_from`, a tree hash) — both independent of `clean_hash`. `check` never reads it; building, rebuilding, or deleting it never affects findings or the ship gate.
+- **`toon-rust` 0.1.3 has two real encoder/decoder bugs**, both worked around only in `graph.rs`'s wire format (never in public shapes or agent-facing JSON): (1) it cannot tabular-encode an array of objects with any non-primitive field (e.g. `Finding.location`), so `GraphEntry.semantic_findings` is flattened to a private `FlatFinding`; (2) its decoder miscomputes offsets across multi-byte UTF-8 characters — a single em dash in a doc comment corrupts parsing of every later line, and some sequences (e.g. CJK text) make it panic outright. All free text (paths, signatures, doc summaries, canonical forms, finding messages) is percent-encoded to pure ASCII (`graph::ascii_safe`) before reaching `toon_rust::to_string`, and decoded back on load.
 
 ## Self-check
 

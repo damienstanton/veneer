@@ -80,6 +80,23 @@ shadow faithful to it, don't just patch the shadow to compile — then re-oxidiz
 (`veneer oxidize --file <shadow.rs>`). It is an on-demand check; running it
 during implement (before writing the real code) or verify is encouraged.
 
+## Knowledge graph
+
+`veneer graph build` caches, per file: heuristic public signatures, a doc
+summary, LoC, and a complexity score — any language the walker covers, best-
+effort. For `.rs` files it also lifts those signatures into a generic,
+concrete-type-erased Rust shadow (the *canonical form* — a per-module,
+language-uniform rendering of what the module's contract owns and borrows)
+and runs it through the same oxidation pipeline, attaching any real findings
+as that entry's `semantic_findings`.
+
+`veneer graph query <path>` reads the cache only — no re-walk, no
+re-extraction. It returns `{"entry": ..., "stale": bool}`; `stale: true` means
+the source has changed since the last build (a hint to rebuild, never a
+blocker). The graph has no bearing on `check` or the ship gate — building,
+querying, or skipping it entirely is always safe. Rebuild it whenever it
+would save you a read: after writing new modules, or when `stale` shows up.
+
 ## Phase: plan
 
 Refine the request into a ticket. No artifact ceremony — the issue body is
@@ -104,7 +121,9 @@ The synthesis envelope.
 
 1. Load only the signatures of dependencies — not implementations. If a file
    you need exceeds the budget, that is the protocol telling you to read its
-   public surface instead.
+   public surface instead. Before reading a dependency's source, try
+   `veneer graph query <path>` — if a fresh entry exists, its `signatures`/
+   `doc_summary` are usually enough, at a fraction of the tokens.
 2. Write the feature. Keep every touched module first-principles: one
    purpose, minimal public surface, within the LoC band.
 3. Compose via the laws: sum types (or tagged equivalents) with exhaustive

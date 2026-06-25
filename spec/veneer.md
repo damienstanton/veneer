@@ -44,8 +44,9 @@ omitted; per-law fix guidance lives in the skill.
     veneer init [--link <skill-src-dir>]   # config + skill into .claude/ and .agents/
     veneer check [--compact] [--diff <file>] [--intent <file>] [paths...]
     veneer oxidize [--compact] [--file <shadow.rs>]   # transient Rust type-check
+    veneer graph build [--compact] | query [--compact] <path>
     veneer state get [--json]|reset|set <phase> [--ref k=v ...]
-    veneer mcp                              # veneer_check / veneer_state / veneer_oxidize over stdio
+    veneer mcp                              # veneer_check / veneer_state / veneer_oxidize / veneer_graph over stdio
 
 `--link <skill-src-dir>` creates a symlink from `.claude/skills/veneer` (and
 `.agents/skills/veneer`) to the given source directory; without `--link` the
@@ -65,6 +66,7 @@ is the on-demand exception: it decodes the full stored state (including
     {"intent": "propose_diff",   "patch": <unified>}  → findings
     {"intent": "conclude",       "summary": <text>}   → ship gate | findings
     {"intent": "oxidize",        "shadow": <rust>}    → findings (Law::Oxidation)
+    {"intent": "query_graph",    "query": <path>}     → {entry, stale}
 
 ## State file
 
@@ -121,3 +123,39 @@ project. The `edition` is validated against a fixed allowlist (2015/2018/2021/
 2024) so a config value cannot inject extra manifest sections, but the shadow
 body itself is not sandboxed. Do not feed an untrusted party's Rust through the
 `veneer_oxidize` MCP tool without an external sandbox.
+
+## Knowledge graph
+
+`veneer graph build` walks the tree (the same walker `check` uses — `.veneer/`,
+`target/`, etc. are skipped) and extracts, per file: heuristic public
+signatures, a leading doc-comment summary, LoC, and a branch-keyword
+complexity score. Heuristic, not an AST — honest about being structural, not
+a real parser; the marker table is per-extension (Rust/Python/TypeScript today),
+empty markers ⇒ no signatures for that file (LoC/complexity still apply).
+
+For `.rs` files specifically, the extracted signatures are *lifted*: every
+project-specific type is generic-erased to a fresh type parameter, consistently
+within each signature, preserving its ownership/borrowing shape (`&`, `&mut`,
+`Vec<_>`, `Option<_>`, `Box<_>`, ...) while erasing concrete names not
+resolvable in a bare scratch crate. The result — the *canonical form* — is a
+self-contained, generic Rust rendering of "what this module's public contract
+owns and borrows": denser than source, language-uniform regardless of the
+original source language, and itself a per-module domain-specific type theory
+for the project. Running it through the **existing** `oxidize::oxidize()` (no
+second semantic-analysis engine) attaches any real rustc-grade findings —
+lifetime ambiguity, trait-bound failures, anything rustc itself would catch —
+as that entry's `semantic_findings`.
+
+Output is `.veneer/graph.toon` (TOON-encoded), with its own FNV-1a content-hash
+witness and its own staleness witness (`built_from`, a tree hash) — both fully
+independent of `.veneer/state.toon` and the ship-gate `clean_hash`. The graph
+is never read by `check`, never gates a transition; a missing or stale graph
+is a query-time concern only. Building/rebuilding it is idempotent: an
+unchanged tree always produces a byte-identical `.veneer/graph.toon` (`semantic_findings`
+included — cargo's diagnostics for a fixed shadow are deterministic).
+
+`veneer graph query <path>` (CLI, MCP `veneer_graph`, and the
+`query_graph` intent) returns `{"entry": <GraphEntry|null>, "stale": bool}` —
+a read against the cache only, no re-walk or re-extraction. `--compact`/MCP
+strip `suggested_fix` from any nested `semantic_findings`, same as a top-level
+findings array.

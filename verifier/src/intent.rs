@@ -17,6 +17,8 @@ pub enum AgentIntent {
     Conclude { summary: String },
     /// Type-check an agent-authored Rust shadow skeleton (oxidation).
     Oxidize { shadow: String },
+    /// Look up a file's cached knowledge-graph entry.
+    QueryGraph { query: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +26,9 @@ pub enum Outcome {
     Context(String),
     Findings(Vec<Finding>),
     Concluded(String),
+    /// The looked-up entry (`None` if not present) and whether the graph is
+    /// stale relative to the current tree.
+    GraphQuery(Option<crate::graph::GraphEntry>, bool),
 }
 
 /// Parse an intent; out-of-protocol input is a Protocol finding, never a crash.
@@ -34,7 +39,7 @@ pub fn parse_intent(s: &str) -> Result<AgentIntent, Finding> {
             "<intent>",
             None,
             &format!("malformed intent: {e}"),
-            Some(r#"emit {"intent":"expand_context"|"propose_diff"|"conclude"|"oxidize", ...}"#),
+            Some(r#"emit {"intent":"expand_context"|"propose_diff"|"conclude"|"oxidize"|"query_graph", ...}"#),
         )
     })
 }
@@ -76,5 +81,13 @@ pub fn execute(root: &Path, intent: AgentIntent, cfg: &Config) -> Outcome {
         AgentIntent::Oxidize { shadow } => {
             Outcome::Findings(crate::oxidize::oxidize(root, &shadow, &cfg.oxidize))
         }
+        AgentIntent::QueryGraph { query } => match crate::graph::load(root) {
+            Ok(g) => {
+                let stale = crate::graph::is_stale(&g, root);
+                let entry = crate::graph::query(&g, &query).cloned();
+                Outcome::GraphQuery(entry, stale)
+            }
+            Err(f) => Outcome::Findings(vec![f]),
+        },
     }
 }

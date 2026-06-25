@@ -72,3 +72,36 @@ fn oxidize_intent_roundtrips() {
     let parsed = parse_intent(json).unwrap();
     assert_eq!(parsed, AgentIntent::Oxidize { shadow: "pub fn f() {}\n".into() });
 }
+
+#[test]
+fn query_graph_intent_roundtrips() {
+    let json = r#"{"intent":"query_graph","query":"src/api.rs"}"#;
+    let parsed = parse_intent(json).unwrap();
+    assert_eq!(parsed, AgentIntent::QueryGraph { query: "src/api.rs".into() });
+}
+
+#[test]
+fn query_graph_returns_entry_and_staleness() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "pub fn f() {}\n").unwrap();
+    let g = veneer::graph::build(dir.path(), &Config::default()).unwrap();
+    veneer::graph::store(dir.path(), &g).unwrap();
+    let out = execute(dir.path(), AgentIntent::QueryGraph { query: "a.rs".into() }, &Config::default());
+    match out {
+        Outcome::GraphQuery(Some(entry), stale) => {
+            assert_eq!(entry.path, "a.rs");
+            assert!(!stale);
+        }
+        other => panic!("expected GraphQuery(Some, false), got {other:?}"),
+    }
+}
+
+#[test]
+fn query_graph_missing_entry_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = execute(dir.path(), AgentIntent::QueryGraph { query: "missing.rs".into() }, &Config::default());
+    match out {
+        Outcome::GraphQuery(None, _) => {}
+        other => panic!("expected GraphQuery(None, _), got {other:?}"),
+    }
+}
