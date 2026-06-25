@@ -244,7 +244,14 @@ fn cmd_state(root: &Path, args: &[String]) -> i32 {
         Some("get") => {
             // `--json` decodes the full stored state to readable JSON on demand;
             // the default view stays the token-lean phase+refs summary.
-            let full = args.get(1).map(String::as_str) == Some("--json");
+            let full = match &args[1..] {
+                [] => false,
+                [flag] if flag == "--json" => true,
+                _ => {
+                    eprintln!("{USAGE}");
+                    return 2;
+                }
+            };
             match load(root) {
                 Ok(s) => {
                     if full {

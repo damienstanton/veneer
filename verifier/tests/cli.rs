@@ -96,6 +96,13 @@ fn state_get_json_reports_full_decoded_state() {
 }
 
 #[test]
+fn state_get_rejects_unrecognized_args() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(veneer(dir.path(), &["state", "get", "bogus"]).status.code(), Some(2));
+    assert_eq!(veneer(dir.path(), &["state", "get", "--json", "extra"]).status.code(), Some(2));
+}
+
+#[test]
 fn check_intent_processes_an_intent_file() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("sig.rs"), "pub fn api();\n").unwrap();

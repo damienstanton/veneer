@@ -76,7 +76,7 @@ pub fn transition(current: Phase, requested: Phase) -> Result<(), Finding> {
     } else {
         Err(Finding::error(
             Law::Protocol,
-            ".veneer/state.json",
+            ".veneer/state.toon",
             None,
             &format!("invalid transition {} → {}", current.name(), requested.name()),
             Some("lifecycle is plan → implement → verify → ship (verify may return to implement; ship returns to plan)"),
@@ -148,22 +148,42 @@ mod clean_check_repr {
 /// Load state; absent file is the Plan default; corruption (bad encoding or
 /// hash mismatch) is a Protocol finding, never a crash. Prefers the TOON file
 /// and falls back to a legacy JSON file (decoded identically).
+///
+/// The legacy fallback triggers only when the TOON file is genuinely absent
+/// (`NotFound`); any other read error on it (permission denied, invalid UTF-8,
+/// etc.) is a real failure on the authoritative file and must not be masked by
+/// silently reading a possibly-stale legacy file. Findings report whichever
+/// path was actually the source, never a hardcoded one.
 pub fn load(root: &Path) -> Result<State, Finding> {
+    use std::io::ErrorKind;
+    let io_finding = |path: &str, e: &std::io::Error| {
+        Finding::error(
+            Law::Protocol,
+            path,
+            None,
+            &format!("cannot read state file: {e}"),
+            Some("run `veneer state reset` to start a fresh cycle"),
+        )
+    };
+    let toon = state_path(root);
+    let legacy = legacy_path(root);
+    let (raw, is_toon, source) = match std::fs::read_to_string(&toon) {
+        Ok(r) => (r, true, ".veneer/state.toon"),
+        Err(e) if e.kind() == ErrorKind::NotFound => match std::fs::read_to_string(&legacy) {
+            Ok(r) => (r, false, ".veneer/state.json"),
+            Err(e2) if e2.kind() == ErrorKind::NotFound => return Ok(State::default()),
+            Err(e2) => return Err(io_finding(".veneer/state.json", &e2)),
+        },
+        Err(e) => return Err(io_finding(".veneer/state.toon", &e)),
+    };
     let corrupt = |msg: &str| {
         Finding::error(
             Law::Protocol,
-            ".veneer/state.toon",
+            source,
             None,
             msg,
             Some("run `veneer state reset` to start a fresh cycle"),
         )
-    };
-    let (raw, is_toon) = match std::fs::read_to_string(state_path(root)) {
-        Ok(r) => (r, true),
-        Err(_) => match std::fs::read_to_string(legacy_path(root)) {
-            Ok(r) => (r, false),
-            Err(_) => return Ok(State::default()),
-        },
     };
     let od: OnDisk = if is_toon {
         toon_rust::from_str(&raw).map_err(|_| corrupt("state file is not valid TOON"))?
@@ -224,7 +244,7 @@ pub fn record_clean_check(root: &Path, hash: u64) -> Result<(), Finding> {
     let mut s = load(root)?;
     s.last_clean_check = Some(hash);
     store(root, &s).map_err(|e| {
-        Finding::error(Law::Protocol, ".veneer/state.json", None, &format!("cannot write state: {e}"), None)
+        Finding::error(Law::Protocol, ".veneer/state.toon", None, &format!("cannot write state: {e}"), None)
     })
 }
 
@@ -245,7 +265,7 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
             None => {
                 return Err(Finding::error(
                     Law::Protocol,
-                    ".veneer/state.json",
+                    ".veneer/state.toon",
                     None,
                     "ship gate: no clean check recorded",
                     Some("run `veneer check` until clean, then ship"),
@@ -254,7 +274,7 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
             Some(h) if h != current => {
                 return Err(Finding::error(
                     Law::Protocol,
-                    ".veneer/state.json",
+                    ".veneer/state.toon",
                     None,
                     "ship gate: last clean check is stale (tree or config changed since)",
                     Some("re-run `veneer check`, then ship"),
@@ -268,7 +288,7 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
         s.refs.insert(k.clone(), v.clone());
     }
     store(root, &s).map_err(|e| {
-        Finding::error(Law::Protocol, ".veneer/state.json", None, &format!("cannot write state: {e}"), None)
+        Finding::error(Law::Protocol, ".veneer/state.toon", None, &format!("cannot write state: {e}"), None)
     })?;
     Ok(s)
 }
