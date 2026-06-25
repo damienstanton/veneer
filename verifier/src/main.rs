@@ -12,6 +12,7 @@ USAGE:
   veneer init [--link <skill-src-dir>]
   veneer check [--compact] [--diff <patch-file>] [--intent <intent.json>] [paths...]
   veneer oxidize [--compact] [--file <shadow.rs>]   # type-check a Rust shadow (reads stdin if no --file)
+  veneer graph build [--compact] | query [--compact] <path>
   veneer state get [--json] | set <phase> [--ref k=v ...] | reset
   veneer mcp
 ";
@@ -55,6 +56,7 @@ fn emit_compact(findings: &[Finding]) -> i32 {
     println!("{}", findings_json_compact(findings));
     if findings.iter().any(|f| f.severity == Severity::Error) { 1 } else { 0 }
 }
+
 
 fn cmd_init(root: &Path, link: Option<&str>) -> i32 {
     let cfg_path = root.join(".veneer/config.toml");
@@ -222,6 +224,75 @@ fn cmd_oxidize(root: &Path, args: &[String]) -> i32 {
     if compact { emit_compact(&findings) } else { emit(&findings) }
 }
 
+fn cmd_graph(root: &Path, args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("build") => {
+            let compact = match &args[1..] {
+                [] => false,
+                [flag] if flag == "--compact" => true,
+                _ => {
+                    eprintln!("{USAGE}");
+                    return 2;
+                }
+            };
+            let cfg = match load_config(root) {
+                Ok(c) => c,
+                Err(f) => return if compact { emit_compact(&[f]) } else { emit(&[f]) },
+            };
+            let graph = match veneer::graph::build(root, &cfg) {
+                Ok(g) => g,
+                Err(f) => return if compact { emit_compact(&[f]) } else { emit(&[f]) },
+            };
+            if let Err(e) = veneer::graph::store(root, &graph) {
+                eprintln!("error: cannot write graph: {e}");
+                return 2;
+            }
+            // Surface the aggregate semantic findings on stdout, matching
+            // `check`/`oxidize`'s findings-array convention; the full
+            // per-file detail (signatures, canonical_form, docs) lives in
+            // the cache, queried on demand rather than dumped here.
+            let findings: Vec<Finding> =
+                graph.entries.values().flat_map(|e| e.semantic_findings.clone()).collect();
+            if compact { emit_compact(&findings) } else { emit(&findings) }
+        }
+        Some("query") => {
+            let (compact, target) = match &args[1..] {
+                [t] if t != "--compact" => (false, t.as_str()),
+                [flag, t] if flag == "--compact" && t != "--compact" => (true, t.as_str()),
+                [t, flag] if flag == "--compact" && t != "--compact" => (true, t.as_str()),
+                _ => {
+                    eprintln!("{USAGE}");
+                    return 2;
+                }
+            };
+            match veneer::graph::load(root) {
+                Ok(g) => {
+                    let stale = veneer::graph::is_stale(&g, root);
+                    let found = veneer::graph::query(&g, target);
+                    let entry_json = if compact {
+                        veneer::graph::entry_json_compact(found)
+                    } else {
+                        serde_json::to_value(found).unwrap()
+                    };
+                    println!("{}", serde_json::json!({ "entry": entry_json, "stale": stale }));
+                    0
+                }
+                Err(f) => {
+                    if compact {
+                        emit_compact(&[f])
+                    } else {
+                        emit(&[f])
+                    }
+                }
+            }
+        }
+        _ => {
+            eprintln!("{USAGE}");
+            2
+        }
+    }
+}
+
 fn cmd_intent(root: &Path, contents: &str, cfg: &veneer::laws::Config) -> i32 {
     match parse_intent(contents) {
         Err(f) => emit(&[f]),
@@ -233,6 +304,10 @@ fn cmd_intent(root: &Path, contents: &str, cfg: &veneer::laws::Config) -> i32 {
             Outcome::Findings(fs) => emit(&fs),
             Outcome::Concluded(summary) => {
                 println!("{}", serde_json::json!({ "concluded": summary }));
+                0
+            }
+            Outcome::GraphQuery(entry, stale) => {
+                println!("{}", serde_json::json!({ "entry": entry, "stale": stale }));
                 0
             }
         },
@@ -333,6 +408,7 @@ fn main() {
         }
         Some("check") => cmd_check(&root, &args[1..]),
         Some("oxidize") => cmd_oxidize(&root, &args[1..]),
+        Some("graph") => cmd_graph(&root, &args[1..]),
         Some("state") => cmd_state(&root, &args[1..]),
         Some("mcp") => veneer::mcp::serve(root.clone()),
         _ => {

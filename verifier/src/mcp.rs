@@ -27,6 +27,14 @@ pub struct OxidizeArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct GraphArgs {
+    /// "build" or "query"
+    pub action: String,
+    /// Target root-relative path for "query"
+    pub query: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct StateArgs {
     /// "get", "set", or "reset"
     pub action: String,
@@ -80,6 +88,55 @@ impl VeneerServer {
         };
         let findings = crate::oxidize::oxidize(&self.root, &args.0.shadow, &cfg.oxidize);
         CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
+    }
+
+    #[tool(description = "Build or query the codebase knowledge graph: cached per-file signatures, doc summaries, LoC, complexity, and (Rust files) real semantic findings lifted through oxidize. action=\"build\" regenerates the cache; action=\"query\" (with `query`: a root-relative path) returns that file's cached entry plus whether the cache is stale.")]
+    fn veneer_graph(&self, args: Parameters<GraphArgs>) -> CallToolResult {
+        let a = args.0;
+        let body = match a.action.as_str() {
+            "build" => {
+                let cfg = match load_config(&self.root) {
+                    Ok(c) => c,
+                    Err(f) => return CallToolResult::success(vec![Content::text(findings_json_compact(&[f]))]),
+                };
+                match crate::graph::build(&self.root, &cfg) {
+                    Ok(g) => match crate::graph::store(&self.root, &g) {
+                        Ok(()) => {
+                            let findings: Vec<Finding> =
+                                g.entries.values().flat_map(|e| e.semantic_findings.clone()).collect();
+                            findings_json_compact(&findings)
+                        }
+                        Err(e) => findings_json_compact(&[Finding::error(
+                            Law::Protocol,
+                            "<mcp>",
+                            None,
+                            &format!("cannot write graph: {e}"),
+                            None,
+                        )]),
+                    },
+                    Err(f) => findings_json_compact(&[f]),
+                }
+            }
+            "query" => match a.query {
+                None => findings_json_compact(&[Finding::error(
+                    Law::Protocol,
+                    "<mcp>",
+                    None,
+                    "query requires a target path",
+                    None,
+                )]),
+                Some(target) => match crate::graph::load(&self.root) {
+                    Ok(g) => {
+                        let stale = crate::graph::is_stale(&g, &self.root);
+                        let entry = crate::graph::entry_json_compact(crate::graph::query(&g, &target));
+                        serde_json::json!({ "entry": entry, "stale": stale }).to_string()
+                    }
+                    Err(f) => findings_json_compact(&[f]),
+                },
+            },
+            _ => findings_json_compact(&[Finding::error(Law::Protocol, "<mcp>", None, "action must be build|query", None)]),
+        };
+        CallToolResult::success(vec![Content::text(body)])
     }
 
     #[tool(description = "Read or transition the veneer lifecycle state (plan → implement → verify → ship). Invalid transitions and a stale ship gate return protocol findings.")]
