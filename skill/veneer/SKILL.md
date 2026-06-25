@@ -82,20 +82,21 @@ during implement (before writing the real code) or verify is encouraged.
 
 ## Knowledge graph
 
-`veneer graph build` caches, per file: heuristic public signatures, a doc
-summary, LoC, and a complexity score — any language the walker covers, best-
-effort. For `.rs` files it also lifts those signatures into a generic,
-concrete-type-erased Rust shadow (the *canonical form* — a per-module,
-language-uniform rendering of what the module's contract owns and borrows)
-and runs it through the same oxidation pipeline, attaching any real findings
-as that entry's `semantic_findings`.
+The graph caches, per file: heuristic public signatures, a doc summary, LoC,
+and a complexity score — any language the walker covers, best-effort. For
+`.rs` files it also lifts those signatures into a generic, concrete-type-
+erased Rust shadow (the *canonical form* — a per-module, language-uniform
+rendering of what the module's contract owns and borrows) and runs it through
+the same oxidation pipeline, attaching any real findings as that entry's
+`semantic_findings`.
 
-`veneer graph query <path>` reads the cache only — no re-walk, no
-re-extraction. It returns `{"entry": ..., "stale": bool}`; `stale: true` means
-the source has changed since the last build (a hint to rebuild, never a
-blocker). The graph has no bearing on `check` or the ship gate — building,
-querying, or skipping it entirely is always safe. Rebuild it whenever it
-would save you a read: after writing new modules, or when `stale` shows up.
+You do not maintain it by hand: a clean full `veneer check` refreshes it
+automatically as a side effect, so it stays fresh once per cycle. Just read
+from it — `veneer graph query <path>` reads the cache only (no re-walk) and
+returns `{"entry": ..., "stale": bool}`. `stale: true` means the source
+changed since the last refresh; run `veneer check` (or `veneer graph build`
+to force it) to refresh. The graph has no bearing on `check` or the ship
+gate — querying it, or ignoring it entirely, is always safe.
 
 ## Phase: plan
 

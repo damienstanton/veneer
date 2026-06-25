@@ -53,6 +53,12 @@ omitted; per-law fix guidance lives in the skill.
 single skill file is written verbatim. Exit codes: 0 clean (warnings
 permitted) · 1 error findings · 2 usage error.
 
+`init` is idempotent and is the only manual step when upgrading an existing
+project to a new veneer version: it rewrites the embedded skill only when its
+content changed and leaves an existing `.veneer/config.toml` untouched.
+Everything else is automatic — state files migrate to the current format on
+their next write, and the knowledge graph rebuilds on the next clean `check`.
+
 `--compact` emits the findings JSON on stdout only (no stderr render) and
 omits `suggested_fix` — the token-lean trace for agent consumption. MCP
 findings are always compact. State responses (CLI and MCP) carry `phase` and
@@ -153,6 +159,16 @@ is never read by `check`, never gates a transition; a missing or stale graph
 is a query-time concern only. Building/rebuilding it is idempotent: an
 unchanged tree always produces a byte-identical `.veneer/graph.toon` (`semantic_findings`
 included — cargo's diagnostics for a fixed shadow are deterministic).
+
+The graph is maintained automatically: a clean full `veneer check` (no paths,
+no diff) refreshes it as a best-effort side effect, immediately after
+recording the ship-gate witness. This keeps it fresh once per cycle (a cycle
+cannot ship without a clean check) with no explicit `graph build`. The
+refresh is write-only — `check`'s findings and exit code are computed before
+it and are byte-for-byte identical whether the rebuild succeeds, fails, or is
+skipped; failures are swallowed. The clean-tree short-circuit returns before
+the refresh, so an unchanged tree never pays the cost. `veneer graph build`
+remains for a forced/manual rebuild.
 
 `veneer graph query <path>` (CLI, MCP `veneer_graph`, and the
 `query_graph` intent) returns `{"entry": <GraphEntry|null>, "stale": bool}` —

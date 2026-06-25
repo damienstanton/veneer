@@ -1,6 +1,6 @@
 use veneer::graph::{
-    build, complexity_score, entry_json_compact, extract_doc_summary, extract_signatures, is_stale, lift_shadow,
-    load, query, store, Graph,
+    build, catch_and_silence, complexity_score, entry_json_compact, extract_doc_summary, extract_signatures,
+    is_stale, lift_shadow, load, query, store, Graph,
 };
 use veneer::laws::Config;
 
@@ -291,6 +291,18 @@ fn graph_with_non_ascii_doc_comments_persists_and_round_trips() {
     assert!(g.entries["a.rs"].doc_summary.as_ref().unwrap().contains('—'), "fixture must contain non-ASCII");
     store(dir.path(), &g).unwrap();
     assert_eq!(load(dir.path()).unwrap(), g);
+}
+
+#[test]
+fn catch_and_silence_prevents_a_panic_from_propagating() {
+    // Proves the mechanism `rebuild` relies on actually works, independent
+    // of whether `build`/`store` happen to panic today. `rebuild` is
+    // documented as never affecting `check`'s verdict, but its call chain
+    // includes `.expect()` on `toon_rust::to_string` — a crate that has
+    // already surfaced two real, surprising encoding bugs this session. A
+    // future quirk panicking there must not be able to crash `check`.
+    catch_and_silence(|| panic!("simulated unexpected failure"));
+    // Reaching this line at all is the proof: the panic did not propagate.
 }
 
 #[test]
