@@ -40,7 +40,7 @@ The repository has three layers:
 - **`--compact` vs full**: `--compact` and MCP always omit `suggested_fix` to save agent tokens. Per-law fix guidance lives in the skill, not in the binary output.
 - **Walker skips**: `.git`, `.veneer`, `target`, `node_modules`, `.claude`, `.agents` (dirs); `*.lock`, `package-lock.json`, `pnpm-lock.yaml` (generated files). Lockfiles never count toward LoC budget or tree hash.
 - **`loc_exclude`**: entries starting with `.` are extension suffixes; all others are root-relative path prefixes (include trailing `/` for directories). Excluded files still participate in sealing, idempotency, and the tree hash — only the budget check skips them.
-- **State file integrity**: `.veneer/state.json` embeds an FNV-1a content hash (`"hash": "fnv:<hex>"`); `load` rejects mismatches as a Protocol finding. Never edit by hand; use `veneer state`.
+- **State file integrity**: `.veneer/state.toon` (TOON-encoded) embeds an FNV-1a content hash (`hash: fnv:<hex>`) taken over the state's canonical JSON form, so the witness is format-independent; `load` rejects mismatches as a Protocol finding. A legacy `.veneer/state.json` is read as a fallback and migrated to TOON (legacy file removed) on the next write — seamless and invisible. `veneer state get --json` decodes the full stored state to readable JSON on demand. Never edit by hand; use `veneer state`.
 
 ## Self-check
 

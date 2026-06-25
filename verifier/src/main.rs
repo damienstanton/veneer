@@ -12,7 +12,7 @@ USAGE:
   veneer init [--link <skill-src-dir>]
   veneer check [--compact] [--diff <patch-file>] [--intent <intent.json>] [paths...]
   veneer oxidize [--compact] [--file <shadow.rs>]   # type-check a Rust shadow (reads stdin if no --file)
-  veneer state get | set <phase> [--ref k=v ...] | reset
+  veneer state get [--json] | set <phase> [--ref k=v ...] | reset
   veneer mcp
 ";
 
@@ -241,14 +241,23 @@ fn cmd_intent(root: &Path, contents: &str, cfg: &veneer::laws::Config) -> i32 {
 
 fn cmd_state(root: &Path, args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
-        Some("get") => match load(root) {
-            Ok(s) => {
-                println!("{}", veneer::state::public_json(&s));
-                eprintln!("phase: {}", s.phase.name());
-                0
+        Some("get") => {
+            // `--json` decodes the full stored state to readable JSON on demand;
+            // the default view stays the token-lean phase+refs summary.
+            let full = args.get(1).map(String::as_str) == Some("--json");
+            match load(root) {
+                Ok(s) => {
+                    if full {
+                        println!("{}", veneer::state::full_json(&s));
+                    } else {
+                        println!("{}", veneer::state::public_json(&s));
+                        eprintln!("phase: {}", s.phase.name());
+                    }
+                    0
+                }
+                Err(f) => emit(&[f]),
             }
-            Err(f) => emit(&[f]),
-        },
+        }
         Some("reset") => match set_phase(root, Phase::Plan, &[]) {
             Ok(_) => 0,
             Err(_) => {
