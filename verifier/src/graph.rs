@@ -87,10 +87,15 @@ pub fn build(root: &Path, cfg: &Config) -> Result<Graph, Finding> {
             // oxidize labels every finding's location with the generic
             // "<shadow>" (it has no notion of the real source file); rewrite
             // it to this entry's path so a finding is attributable on its
-            // own, not just by which entry happens to hold it.
+            // own, not just by which entry happens to hold it. The line
+            // number is cleared, not carried over: it indexes the synthetic
+            // shadow's own layout, which has no correspondence to line
+            // numbers in the real file — keeping it would pair a real path
+            // with an unrelated line, false precision worse than none.
             let mut findings = crate::oxidize::oxidize(root, &shadow, &cfg.oxidize);
             for f in &mut findings {
                 f.location.path = path.clone();
+                f.location.line = None;
             }
             (Some(shadow), findings)
         } else {
@@ -294,16 +299,20 @@ pub fn store(root: &Path, g: &Graph) -> std::io::Result<()> {
     std::fs::rename(&tmp, graph_path(root))
 }
 
-/// Load the graph; a missing file is the empty default (never built yet —
-/// not corruption). A malformed file or content-hash mismatch is a Protocol
-/// finding, never a panic.
+/// Load the graph; a genuinely missing file (`NotFound`) is the empty
+/// default (never built yet — not corruption). Any other read error
+/// (permission denied, etc.) surfaces as a Protocol finding rather than
+/// being silently treated as "never built" — masking a real IO problem as
+/// an empty graph would make it harder to diagnose, not easier. A malformed
+/// file or content-hash mismatch is also a Protocol finding, never a panic.
 pub fn load(root: &Path) -> Result<Graph, Finding> {
-    let raw = match std::fs::read_to_string(graph_path(root)) {
-        Ok(r) => r,
-        Err(_) => return Ok(Graph::default()),
-    };
     let corrupt = |msg: &str| {
         Finding::error(Law::Protocol, ".veneer/graph.toon", None, msg, Some("run `veneer graph build` to regenerate"))
+    };
+    let raw = match std::fs::read_to_string(graph_path(root)) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Graph::default()),
+        Err(e) => return Err(corrupt(&format!("cannot read graph file: {e}"))),
     };
     let od: OnDisk = toon_rust::from_str(&raw).map_err(|_| corrupt("graph file is not valid TOON"))?;
     let entries: BTreeMap<String, GraphEntry> =

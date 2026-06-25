@@ -210,6 +210,10 @@ fn build_attributes_semantic_findings_to_the_real_file_not_the_generic_shadow_la
     let e = &g.entries["a.rs"];
     assert!(!e.semantic_findings.is_empty());
     assert_eq!(e.semantic_findings[0].location.path, "a.rs", "{:?}", e.semantic_findings);
+    // The line number indexes the synthetic shadow's own layout, not the
+    // real file — carrying it over would pair a real path with an
+    // unrelated line, false precision worse than none.
+    assert_eq!(e.semantic_findings[0].location.line, None, "{:?}", e.semantic_findings);
 }
 
 #[test]
@@ -294,6 +298,17 @@ fn missing_graph_loads_as_empty_default() {
     let dir = tempfile::tempdir().unwrap();
     let g = load(dir.path()).unwrap();
     assert!(g.entries.is_empty());
+}
+
+#[test]
+fn unreadable_graph_file_is_a_protocol_finding_not_a_silent_default() {
+    // A non-NotFound read error (here: the path is a directory, not a file)
+    // must surface as a Protocol finding, not be silently treated as "never
+    // built" — that would mask a real IO problem as an empty graph.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".veneer/graph.toon")).unwrap();
+    let f = load(dir.path()).unwrap_err();
+    assert_eq!(f.law, veneer::laws::Law::Protocol);
 }
 
 #[test]

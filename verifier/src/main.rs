@@ -227,11 +227,14 @@ fn cmd_oxidize(root: &Path, args: &[String]) -> i32 {
 fn cmd_graph(root: &Path, args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("build") => {
-            let compact = args.get(1).map(String::as_str) == Some("--compact");
-            if args.len() > 1 && !compact {
-                eprintln!("{USAGE}");
-                return 2;
-            }
+            let compact = match &args[1..] {
+                [] => false,
+                [flag] if flag == "--compact" => true,
+                _ => {
+                    eprintln!("{USAGE}");
+                    return 2;
+                }
+            };
             let cfg = match load_config(root) {
                 Ok(c) => c,
                 Err(f) => return if compact { emit_compact(&[f]) } else { emit(&[f]) },
@@ -253,17 +256,14 @@ fn cmd_graph(root: &Path, args: &[String]) -> i32 {
             if compact { emit_compact(&findings) } else { emit(&findings) }
         }
         Some("query") => {
-            let (mut compact, mut target) = (false, None);
-            for a in &args[1..] {
-                if a == "--compact" {
-                    compact = true;
-                } else {
-                    target = Some(a.as_str());
+            let (compact, target) = match &args[1..] {
+                [t] if t != "--compact" => (false, t.as_str()),
+                [flag, t] if flag == "--compact" && t != "--compact" => (true, t.as_str()),
+                [t, flag] if flag == "--compact" && t != "--compact" => (true, t.as_str()),
+                _ => {
+                    eprintln!("{USAGE}");
+                    return 2;
                 }
-            }
-            let Some(target) = target else {
-                eprintln!("{USAGE}");
-                return 2;
             };
             match veneer::graph::load(root) {
                 Ok(g) => {

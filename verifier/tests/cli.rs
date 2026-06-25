@@ -472,6 +472,23 @@ fn graph_query_without_target_is_usage_error() {
 }
 
 #[test]
+fn graph_build_rejects_extra_args_after_compact() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(veneer(dir.path(), &["graph", "build", "--compact", "extra"]).status.code(), Some(2));
+    assert_eq!(veneer(dir.path(), &["graph", "build", "bogus"]).status.code(), Some(2));
+}
+
+#[test]
+fn graph_query_rejects_multiple_targets_and_unknown_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(veneer(dir.path(), &["graph", "query", "a.rs", "b.rs"]).status.code(), Some(2));
+    assert_eq!(veneer(dir.path(), &["graph", "query", "--comapct", "a.rs"]).status.code(), Some(2));
+    // Both orderings of a valid --compact + target still work.
+    assert_eq!(veneer(dir.path(), &["graph", "query", "--compact", "a.rs"]).status.code(), Some(0));
+    assert_eq!(veneer(dir.path(), &["graph", "query", "a.rs", "--compact"]).status.code(), Some(0));
+}
+
+#[test]
 fn check_findings_are_identical_with_or_without_a_graph_present() {
     // .veneer/ is already walker-skipped, but this proves it end-to-end for
     // the graph cache specifically: building it must not change `check`'s
