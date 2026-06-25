@@ -44,7 +44,7 @@ omitted; per-law fix guidance lives in the skill.
     veneer init [--link <skill-src-dir>]   # config + skill into .claude/ and .agents/
     veneer check [--compact] [--diff <file>] [--intent <file>] [paths...]
     veneer oxidize [--compact] [--file <shadow.rs>]   # transient Rust type-check
-    veneer state get|reset|set <phase> [--ref k=v ...]
+    veneer state get [--json]|reset|set <phase> [--ref k=v ...]
     veneer mcp                              # veneer_check / veneer_state / veneer_oxidize over stdio
 
 `--link <skill-src-dir>` creates a symlink from `.claude/skills/veneer` (and
@@ -55,7 +55,9 @@ permitted) · 1 error findings · 2 usage error.
 `--compact` emits the findings JSON on stdout only (no stderr render) and
 omits `suggested_fix` — the token-lean trace for agent consumption. MCP
 findings are always compact. State responses (CLI and MCP) carry `phase` and
-`refs` only; gate internals stay in the state file.
+`refs` only; gate internals stay in the state file. `veneer state get --json`
+is the on-demand exception: it decodes the full stored state (including
+`last_clean_check`) to readable, parseable JSON for inspection.
 
 ## Intent ADT
 
@@ -66,9 +68,17 @@ findings are always compact. State responses (CLI and MCP) carry `phase` and
 
 ## State file
 
-`.veneer/state.json`: `{phase, refs, last_clean_check, hash}` where `hash`
-is the FNV-1a content hash of the rest — replayed writes converge; tampering
-is detected as a protocol finding. Never edit by hand.
+`.veneer/state.toon`: `{phase, refs, last_clean_check, hash}` encoded as TOON
+(token-efficient JSON) where `hash` is the FNV-1a content hash of the logical
+state — taken over its canonical JSON form, so the witness is format-independent
+and survives migration. Replayed writes converge; tampering is detected as a
+protocol finding. `last_clean_check` is stored as a quoted decimal string so the
+full-width u64 round-trips through TOON exactly. Never edit by hand.
+
+A project written by an older veneer carries a legacy `.veneer/state.json`.
+`load` reads either file (TOON preferred, JSON fallback, decoded identically);
+the next state-mutating write produces `.veneer/state.toon` and removes the
+legacy JSON. Migration is seamless and invisible.
 
 On the `ship → plan` transition, `last_clean_check` is cleared so that a stale
 hash from a prior cycle cannot satisfy the ship gate of the next cycle; every

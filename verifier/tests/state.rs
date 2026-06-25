@@ -136,6 +136,109 @@ fn adversarial_state_shapes_are_findings_not_panics() {
 }
 
 #[test]
+fn state_is_persisted_as_toon_not_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = State::default();
+    s.phase = Phase::Verify;
+    s.refs.insert("issue".into(), "5".into());
+    store(dir.path(), &s).unwrap();
+    let toon = dir.path().join(".veneer/state.toon");
+    assert!(toon.exists(), "TOON state file must exist");
+    assert!(!dir.path().join(".veneer/state.json").exists(), "no JSON state file written");
+    let body = std::fs::read_to_string(&toon).unwrap();
+    assert!(!body.trim_start().starts_with('{'), "on-disk state is TOON, not JSON: {body}");
+    assert!(serde_json::from_str::<serde_json::Value>(&body).is_err(), "TOON body is not JSON: {body}");
+    assert_eq!(load(dir.path()).unwrap(), s);
+}
+
+#[test]
+fn legacy_json_migrates_to_toon_on_next_write() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    // Hand-write a valid legacy JSON state file, hashed exactly as an older
+    // veneer wrote it (FNV over the JSON serialization of the logical State).
+    let mut s = State::default();
+    s.phase = Phase::Implement;
+    s.refs.insert("issue".into(), "5".into());
+    let hash = format!("fnv:{:016x}", veneer::laws::fnv64(&serde_json::to_vec(&s).unwrap()));
+    let mut v = serde_json::to_value(&s).unwrap();
+    v.as_object_mut().unwrap().insert("hash".into(), serde_json::Value::String(hash));
+    let json_path = dir.path().join(".veneer/state.json");
+    std::fs::write(&json_path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+
+    // A read decodes the legacy file faithfully and does not migrate (load is pure).
+    assert_eq!(load(dir.path()).unwrap(), s);
+    assert!(json_path.exists(), "a read must not migrate the legacy file");
+
+    // The next write migrates: TOON appears, the legacy JSON is removed.
+    set_phase(dir.path(), Phase::Verify, &[]).unwrap();
+    assert!(dir.path().join(".veneer/state.toon").exists(), "TOON file written on migration");
+    assert!(!json_path.exists(), "legacy JSON removed after migration");
+    let loaded = load(dir.path()).unwrap();
+    assert_eq!(loaded.phase, Phase::Verify);
+    assert_eq!(loaded.refs["issue"], "5");
+}
+
+#[test]
+fn tampered_toon_state_is_a_protocol_finding() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = State::default();
+    s.phase = Phase::Verify;
+    store(dir.path(), &s).unwrap();
+    let p = dir.path().join(".veneer/state.toon");
+    let body = std::fs::read_to_string(&p).unwrap();
+    // Corrupt the embedded hash itself — independent of TOON's exact
+    // formatting, this guarantees a content-hash mismatch on load.
+    assert!(body.contains("fnv:"), "TOON body: {body}");
+    let tampered = body.replacen("fnv:", "fnv:ff", 1);
+    assert_ne!(tampered, body, "tamper must alter the file");
+    std::fs::write(&p, tampered).unwrap();
+    assert_eq!(load(dir.path()).unwrap_err().law, Law::Protocol);
+}
+
+#[test]
+fn corrupt_legacy_only_file_reports_legacy_path() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/state.json"), "{\"phase\":\"plan\",\"hash\":\"tampered\"}").unwrap();
+    let f = load(dir.path()).unwrap_err();
+    assert_eq!(f.law, Law::Protocol);
+    assert_eq!(f.location.path, ".veneer/state.json", "finding must name the file that was actually read");
+}
+
+#[test]
+fn unreadable_toon_file_does_not_fall_back_to_legacy() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".veneer")).unwrap();
+    // A valid, readable legacy file exists...
+    let s = State { phase: Phase::Implement, ..State::default() };
+    let hash = format!("fnv:{:016x}", veneer::laws::fnv64(&serde_json::to_vec(&s).unwrap()));
+    let mut v = serde_json::to_value(&s).unwrap();
+    v.as_object_mut().unwrap().insert("hash".into(), serde_json::Value::String(hash));
+    std::fs::write(dir.path().join(".veneer/state.json"), serde_json::to_string_pretty(&v).unwrap()).unwrap();
+    // ...but state.toon is a directory, not a file: a real (non-NotFound) read
+    // error on the authoritative path, which must surface, not be masked by
+    // silently reading the legacy file underneath it.
+    std::fs::create_dir(dir.path().join(".veneer/state.toon")).unwrap();
+    let f = load(dir.path()).unwrap_err();
+    assert_eq!(f.law, Law::Protocol);
+    assert_eq!(f.location.path, ".veneer/state.toon", "must not silently fall back to the legacy file");
+}
+
+#[test]
+fn full_json_report_is_parseable_and_complete() {
+    let mut s = State::default();
+    s.phase = Phase::Verify;
+    s.refs.insert("issue".into(), "5".into());
+    s.last_clean_check = Some(7);
+    let report = veneer::state::full_json(&s);
+    let v: serde_json::Value = serde_json::from_str(&report).expect("report is valid JSON");
+    assert_eq!(v["phase"], "verify");
+    assert_eq!(v["refs"]["issue"], "5");
+    assert_eq!(v["last_clean_check"], 7);
+}
+
+#[test]
 fn config_change_stales_clean_check() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("code.rs"), "fn main() {}\n").unwrap();

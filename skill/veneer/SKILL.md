@@ -39,7 +39,8 @@ judge; you are the prover. Trust your own planning; let the binary verify.
 
 ## Rules
 
-- Never edit `.veneer/state.json` by hand; go through `veneer state`.
+- Never edit `.veneer/state.toon` by hand; go through `veneer state`.
+  For a readable, parseable dump of the full state, run `veneer state get --json`.
 - Never claim completion while `veneer check` reports Error findings.
 - Findings are the repair signal: read `law`, `location`, `message`, fix
   precisely that (per-law guidance below), re-check.

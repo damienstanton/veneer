@@ -82,6 +82,27 @@ fn state_lifecycle_via_cli() {
 }
 
 #[test]
+fn state_get_json_reports_full_decoded_state() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(veneer(dir.path(), &["state", "set", "implement", "--ref", "issue=5"]).status.code(), Some(0));
+    let out = veneer(dir.path(), &["state", "get", "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("--json emits valid JSON");
+    assert_eq!(v["phase"], "implement");
+    assert_eq!(v["refs"]["issue"], "5");
+    // The on-disk file itself is TOON, not JSON.
+    let body = std::fs::read_to_string(dir.path().join(".veneer/state.toon")).unwrap();
+    assert!(!body.trim_start().starts_with('{'), "state file is TOON: {body}");
+}
+
+#[test]
+fn state_get_rejects_unrecognized_args() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(veneer(dir.path(), &["state", "get", "bogus"]).status.code(), Some(2));
+    assert_eq!(veneer(dir.path(), &["state", "get", "--json", "extra"]).status.code(), Some(2));
+}
+
+#[test]
 fn check_intent_processes_an_intent_file() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("sig.rs"), "pub fn api();\n").unwrap();
