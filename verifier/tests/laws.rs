@@ -154,6 +154,22 @@ fn loc_exclude_skips_extensions_and_dir_prefixes() {
 }
 
 #[test]
+fn loc_exclude_dir_prefix_works_for_dot_prefixed_directories() {
+    // ".lake/" is both a directory (Lake's build output, vendoring .lean
+    // sources under the same extension as real modules) and dot-prefixed.
+    // The trailing '/' must win over the dot rule so this is a path-prefix
+    // match, not an (unreachable) filename-suffix match.
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), ".lake/build/ir/Vendored.lean", &"line\n".repeat(1200));
+    write(dir.path(), "Tau/Real.lean", &"line\n".repeat(1200));
+    let cfg = Config { loc_exclude: vec![".lake/".into()], ..Config::default() };
+    let files = walk_files(dir.path());
+    let findings = check_module_budget(dir.path(), &files, &cfg);
+    assert_eq!(findings.len(), 1, "only Tau/Real.lean may be flagged: {findings:?}");
+    assert_eq!(findings[0].location.path, "Tau/Real.lean");
+}
+
+#[test]
 fn loc_exclude_prefix_without_slash_matches_sibling_dirs() {
     // "docs" (no trailing '/') is a plain prefix: it also matches docsmore/.
     // This is by design — see the loc_exclude doc comment; use "docs/" to

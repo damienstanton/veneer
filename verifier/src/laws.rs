@@ -75,10 +75,13 @@ pub struct Config {
     pub loc_hard: u32,
     #[serde(default)]
     pub modules: Vec<ModuleDecl>,
-    /// LoC-budget exclusions: entries starting with '.' are extension
-    /// suffixes (".json"); all others are root-relative path prefixes
-    /// ("docs/"). Excluded files still participate in sealing, idempotency,
-    /// and the tree hash — only the budget check skips them. Note: prefix
+    /// LoC-budget exclusions: entries ending in '/' are root-relative
+    /// directory path-prefixes ("docs/", ".lake/" — checked before the dot
+    /// rule, so dot-prefixed directories work as prefixes, not suffixes);
+    /// entries starting with '.' (and not ending in '/') are extension
+    /// suffixes (".json"); all other entries are plain path prefixes.
+    /// Excluded files still participate in sealing, idempotency, and the
+    /// tree hash — only the budget check skips them. Note: non-'/' prefix
     /// matching is a plain string prefix, so "docs" also matches "docsmore/";
     /// include the trailing '/' for directory entries.
     #[serde(default)]
@@ -165,13 +168,17 @@ fn rel(root: &Path, p: &Path) -> String {
 }
 
 /// True when `path` (root-relative, '/'-separated) matches a `loc_exclude`
-/// entry. Entries starting with '.' are extension suffixes; all others are
-/// path prefixes. Blank entries are inert.
+/// entry. Entries ending in '/' are directory path-prefixes (checked first,
+/// so a dot-prefixed directory like ".lake/" is a prefix match, not an
+/// extension suffix); entries starting with '.' are extension suffixes; all
+/// other entries are path prefixes. Blank entries are inert.
 fn is_loc_excluded(path: &str, cfg: &Config) -> bool {
     cfg.loc_exclude.iter().any(|pat| {
         let pat = pat.trim();
         if pat.is_empty() {
             false
+        } else if pat.ends_with('/') {
+            path.starts_with(pat)
         } else if pat.starts_with('.') {
             path.ends_with(pat)
         } else {
