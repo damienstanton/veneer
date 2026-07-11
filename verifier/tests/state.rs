@@ -239,6 +239,19 @@ fn full_json_report_is_parseable_and_complete() {
 }
 
 #[test]
+fn non_ascii_refs_roundtrip_through_the_toon_wire() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = set_phase(
+        dir.path(),
+        Phase::Plan,
+        &[("title".into(), "café — テスト 100%".into())],
+    )
+    .unwrap();
+    let loaded = load(dir.path()).expect("state written by set_phase must load");
+    assert_eq!(loaded, s);
+}
+
+#[test]
 fn config_change_stales_clean_check() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("code.rs"), "fn main() {}\n").unwrap();

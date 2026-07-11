@@ -190,7 +190,13 @@ pub fn load(root: &Path) -> Result<State, Finding> {
     } else {
         serde_json::from_str(&raw).map_err(|_| corrupt("state file is not valid JSON"))?
     };
-    let state = State { phase: od.phase, refs: od.refs, last_clean_check: od.last_clean_check };
+    // Legacy JSON was written unarmored; only the TOON wire percent-encodes.
+    let refs = if is_toon {
+        od.refs.into_iter().map(|(k, v)| (crate::wire::decode(&k), crate::wire::decode(&v))).collect()
+    } else {
+        od.refs
+    };
+    let state = State { phase: od.phase, refs, last_clean_check: od.last_clean_check };
     let expect = format!("fnv:{:016x}", fnv64(&canonical_bytes(&state)));
     if od.hash != expect {
         return Err(corrupt("state file content hash mismatch"));
@@ -208,7 +214,10 @@ pub fn store(root: &Path, s: &State) -> std::io::Result<()> {
     std::fs::create_dir_all(root.join(".veneer"))?;
     let od = OnDisk {
         phase: s.phase,
-        refs: s.refs.clone(),
+        // Refs are the only free-text field in the state; armor them for the
+        // TOON wire (see wire.rs). The integrity hash is over the *logical*
+        // state, so armoring the wire never changes the witness.
+        refs: s.refs.iter().map(|(k, v)| (crate::wire::encode(k), crate::wire::encode(v))).collect(),
         last_clean_check: s.last_clean_check,
         hash: format!("fnv:{:016x}", fnv64(&canonical_bytes(s))),
     };

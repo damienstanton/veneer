@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+// TOON wire armor — see wire.rs for why this exists.
+use crate::wire as ascii_safe;
+
 /// One file's extracted facts. `canonical_form` and `semantic_findings` are
 /// populated for Rust files only: the generic-erased shadow lifted from
 /// `signatures` (see `lift_shadow`) and the real rustc-grade findings from
@@ -150,55 +153,6 @@ struct OnDisk {
     #[serde(with = "hash_as_string")]
     built_from: u64,
     hash: String,
-}
-
-/// Percent-encodes any byte ≥ 0x80 (plus the `%` marker itself, for an
-/// unambiguous round-trip) so free text is pure ASCII before it reaches
-/// toon_rust. Necessary: toon-rust 0.1.3's decoder miscomputes offsets across
-/// multi-byte UTF-8 characters — a single em dash in a doc comment corrupts
-/// parsing of every subsequent line in the document, and some multi-byte
-/// sequences (e.g. CJK text) make it panic on a char-boundary slice outright.
-/// Plain ASCII (including embedded `\n`, which toon_rust's own escaping
-/// already round-trips correctly) is left untouched. Confined to storage —
-/// `GraphEntry`'s public shape, and all JSON the agent sees, carry normal
-/// UTF-8 text; only the wire format is percent-encoded.
-mod ascii_safe {
-    pub fn encode(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        for b in s.bytes() {
-            if b == b'%' || b >= 0x80 {
-                out.push('%');
-                out.push_str(&format!("{b:02X}"));
-            } else {
-                out.push(b as char);
-            }
-        }
-        out
-    }
-
-    pub fn decode(s: &str) -> String {
-        let bytes = s.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            let hex_byte = if bytes[i] == b'%' && i + 3 <= bytes.len() {
-                std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok())
-            } else {
-                None
-            };
-            match hex_byte {
-                Some(b) => {
-                    out.push(b);
-                    i += 3;
-                }
-                None => {
-                    out.push(bytes[i]);
-                    i += 1;
-                }
-            }
-        }
-        String::from_utf8(out).unwrap_or_default()
-    }
 }
 
 /// `Finding` with `location` flattened to two scalar fields, used only for

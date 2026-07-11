@@ -82,6 +82,10 @@ state — taken over its canonical JSON form, so the witness is format-independe
 and survives migration. Replayed writes converge; tampering is detected as a
 protocol finding. `last_clean_check` is stored as a quoted decimal string so the
 full-width u64 round-trips through TOON exactly. Never edit by hand.
+Free-text fields (`refs`) are percent-encoded to pure ASCII on the TOON wire
+(the same armor the knowledge graph uses — toon-rust 0.1.3's decoder
+miscomputes offsets across multi-byte UTF-8); the logical state, the integrity
+hash, and all JSON output carry normal UTF-8.
 
 A project written by an older veneer carries a legacy `.veneer/state.json`.
 `load` reads either file (TOON preferred, JSON fallback, decoded identically);
