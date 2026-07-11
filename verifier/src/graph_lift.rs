@@ -84,6 +84,7 @@ fn coalesce_paths(tokens: Vec<(String, bool)>) -> Vec<(String, bool)> {
 /// existing `<'a>` produces invalid syntax (`f<'a><T0>`), and this function
 /// cannot reliably merge the two lists, so it does not try. The signature
 /// still appears in `signatures`; it just isn't part of `canonical_form`.
+/// Signatures with trait-position types (`impl Trait`, `dyn Trait`) are skipped for the same reason: erasing a trait to a type parameter manufactures errors.
 /// `where`-clauses are not specially handled and may still fail to compile —
 /// that surfaces as a finding like any other.
 fn lift_fn_signature(sig: &str) -> Option<String> {
@@ -108,6 +109,17 @@ fn lift_fn_signature(sig: &str) -> Option<String> {
     let mut erased = String::new();
     let mut generics: Vec<String> = Vec::new();
     let coalesced = coalesce_paths(tokenize(params_and_ret));
+
+    // Trait-position types cannot be generic-erased: `impl Display` / `&dyn
+    // Error` would erase the *trait* to a type parameter (`impl T0`), which
+    // rustc rejects — a false finding manufactured by the lift, not a property
+    // of the code. Sound by omission: skip, leaving the signature as a plain
+    // recorded fact (spec/oxidation.md, skip S4). The tokenizer word-bounds
+    // this test, so identifiers like `implementation` are not mistaken.
+    if coalesced.iter().any(|(t, is_ident)| *is_ident && (t == "impl" || t == "dyn")) {
+        return None;
+    }
+
     let mut i = 0;
     while i < coalesced.len() {
         let (tok, is_ident) = &coalesced[i];

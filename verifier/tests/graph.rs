@@ -199,6 +199,41 @@ fn lifted_ambiguous_lifetime_signature_yields_a_real_oxidation_finding() {
 }
 
 #[test]
+fn lift_shadow_skips_impl_trait_signatures_rather_than_erasing_the_trait() {
+    let sigs = vec!["pub fn show(x: impl Display) -> String".to_string()];
+    let shadow = veneer::graph::lift_shadow(&sigs);
+    assert!(!shadow.contains("fn show"), "impl-trait must be skipped, got:\n{shadow}");
+}
+
+#[test]
+fn lift_shadow_skips_dyn_trait_signatures() {
+    let sigs = vec!["pub fn log(e: &dyn Error) -> bool".to_string()];
+    let shadow = veneer::graph::lift_shadow(&sigs);
+    assert!(!shadow.contains("fn log"), "dyn-trait must be skipped, got:\n{shadow}");
+}
+
+#[test]
+fn lift_shadow_does_not_mistake_identifiers_containing_impl_or_dyn_for_keywords() {
+    let sigs = vec!["pub fn f(implementation: Foo, dynamic: Bar) -> bool".to_string()];
+    let shadow = veneer::graph::lift_shadow(&sigs);
+    assert!(
+        shadow.contains("pub fn f<T0, T1>(implementation: T0, dynamic: T1) -> bool"),
+        "word-bounded keyword detection required, got:\n{shadow}"
+    );
+}
+
+#[test]
+fn impl_trait_signature_produces_no_false_semantic_findings() {
+    if !cargo_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let shadow =
+        veneer::graph::lift_shadow(&["pub fn show(x: impl ToString) -> String".to_string()]);
+    assert!(ox(dir.path(), &shadow).is_empty(), "skipped signature must yield an empty, clean shadow");
+}
+
+#[test]
 fn build_attributes_semantic_findings_to_the_real_file_not_the_generic_shadow_label() {
     if !cargo_available() {
         eprintln!("skipping: cargo not on PATH");
