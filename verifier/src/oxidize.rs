@@ -109,6 +109,9 @@ pub fn parse_diagnostics(stdout: &str) -> Vec<Finding> {
     findings.sort_by(|a, b| {
         a.location.line.cmp(&b.location.line).then_with(|| a.message.cmp(&b.message))
     });
+    // cargo may emit the same diagnostic once per compilation target; adjacent
+    // after the sort, so Vec::dedup gives a minimal, deterministic trace.
+    findings.dedup();
     findings
 }
 
