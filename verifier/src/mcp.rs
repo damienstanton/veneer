@@ -181,9 +181,10 @@ impl VeneerServer {
     }
 }
 
+// Keep in lockstep with Cargo.toml; pinned by mcp_server_version_matches_the_crate_version.
 #[tool_handler(
     name = "veneer",
-    version = "0.1.0",
+    version = "1.0.0",
     instructions = "veneer verifier: run veneer_check for law findings; veneer_state to read/transition the lifecycle."
 )]
 impl ServerHandler for VeneerServer {}

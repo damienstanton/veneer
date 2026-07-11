@@ -393,3 +393,26 @@ fn oxidize_missing_file_is_usage_error() {
     assert_eq!(out.status.code(), Some(2));
 }
 
+#[test]
+fn mcp_server_version_matches_the_crate_version() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains(&format!("\"version\":\"{}\"", env!("CARGO_PKG_VERSION"))),
+        "serverInfo must carry the crate version, got: {text}"
+    );
+}
+
