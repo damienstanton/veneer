@@ -63,6 +63,13 @@ pub(crate) fn decode(s: &str) -> String {
             }
         }
     }
+    // A well-formed `%XX` escape can still decode to a byte sequence that
+    // isn't valid UTF-8 (e.g. a hand-edited "%FF"). Rather than surface that
+    // as its own error path, fall back to empty and let it fail naturally:
+    // both callers (`graph`/`state` `load`) recompute a content hash over
+    // the decoded result and compare it to the document's stored witness, so
+    // this can only ever produce a hash mismatch — self-heal for the graph,
+    // an explicit Protocol finding for state — never silent data loss.
     String::from_utf8(out).unwrap_or_default()
 }
 

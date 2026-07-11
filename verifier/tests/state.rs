@@ -325,6 +325,38 @@ fn legacy_versionless_toon_state_migrates_version_on_next_write() {
     assert_eq!(loaded.refs["pr"], "https://github.com/x/y/pull/2?q=a%20b");
 }
 
+/// The on-disk shape of a *future* `.veneer/state.toon` this binary doesn't
+/// understand: a `version` newer than `STATE_VERSION`. Distinct from the
+/// version-less legacy shape (`LegacyOnDisk`) only by the explicit field.
+#[derive(serde::Serialize)]
+struct FutureOnDisk {
+    version: u32,
+    phase: Phase,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    refs: std::collections::BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_clean_check: Option<u64>,
+    hash: String,
+}
+
+#[test]
+fn unsupported_future_state_wire_version_is_an_explicit_finding() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = State { phase: Phase::Implement, refs: Default::default(), last_clean_check: None };
+    let hash = format!("fnv:{:016x}", veneer::laws::fnv64(&serde_json::to_vec(&s).unwrap()));
+    let future = FutureOnDisk { version: 2, phase: s.phase, refs: s.refs, last_clean_check: None, hash };
+    let body = toon_rust::to_string(&future).unwrap();
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/state.toon"), body).unwrap();
+
+    let err = load(dir.path()).expect_err("a version this binary doesn't understand must not silently load");
+    assert!(
+        err.message.contains("unsupported wire version 2"),
+        "must name the real problem, not a generic hash mismatch: {}",
+        err.message
+    );
+}
+
 use proptest::prelude::*;
 
 proptest! {

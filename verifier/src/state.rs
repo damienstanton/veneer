@@ -196,6 +196,24 @@ pub fn load(root: &Path) -> Result<State, Finding> {
     } else {
         serde_json::from_str(&raw).map_err(|_| corrupt("state file is not valid JSON"))?
     };
+    // A version newer than this binary understands is a distinct failure
+    // from ordinary corruption: the file is well-formed, just written by a
+    // future veneer under wire rules this binary doesn't have. Name it
+    // explicitly rather than falling through to a generic hash-mismatch
+    // message once the (correctly skipped, since we don't know its armor)
+    // refs fail to reproduce the recorded hash.
+    if is_toon && od.version > STATE_VERSION {
+        return Err(Finding::error(
+            Law::Protocol,
+            source,
+            None,
+            &format!(
+                "state file has unsupported wire version {} (this veneer understands up to {STATE_VERSION})",
+                od.version
+            ),
+            Some("upgrade veneer to a version that understands this state file, or run `veneer state reset` to start a fresh cycle"),
+        ));
+    }
     // Refs are armored only from version 1 onward. Legacy JSON, and a
     // pre-1.0 TOON file (version absent/0, written by an older veneer before
     // the wire was versioned), wrote refs raw — decoding those unconditionally
