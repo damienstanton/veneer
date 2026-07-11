@@ -239,6 +239,19 @@ fn full_json_report_is_parseable_and_complete() {
 }
 
 #[test]
+fn non_ascii_refs_roundtrip_through_the_toon_wire() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = set_phase(
+        dir.path(),
+        Phase::Plan,
+        &[("title".into(), "café — テスト 100%".into())],
+    )
+    .unwrap();
+    let loaded = load(dir.path()).expect("state written by set_phase must load");
+    assert_eq!(loaded, s);
+}
+
+#[test]
 fn config_change_stales_clean_check() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("code.rs"), "fn main() {}\n").unwrap();
@@ -250,4 +263,118 @@ fn config_change_stales_clean_check() {
     std::fs::write(dir.path().join(".veneer/config.toml"), "loc_hard = 1\n").unwrap();
     let f = set_phase(dir.path(), Phase::Ship, &[]).unwrap_err();
     assert!(f.message.contains("stale"));
+}
+
+/// The on-disk shape of a pre-1.0 `.veneer/state.toon`: no `version` field,
+/// and refs stored raw (the TOON wire was not yet armored). Serializing this
+/// with the same `toon_rust` encoder the real `OnDisk` uses reproduces the
+/// authentic wire layout without hardcoding a percent-encoding by hand.
+#[derive(serde::Serialize)]
+struct LegacyOnDisk {
+    phase: Phase,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    refs: std::collections::BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_clean_check: Option<u64>,
+    hash: String,
+}
+
+#[test]
+fn legacy_versionless_toon_state_reads_refs_raw() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut refs = std::collections::BTreeMap::new();
+    // A ref containing a valid `%XX` sequence and one that is a bare `%` —
+    // both would be altered by an unconditional percent-decode.
+    refs.insert("pr".to_string(), "https://github.com/x/y/pull/2?q=a%20b".to_string());
+    refs.insert("weird".to_string(), "%".to_string());
+    let s = State { phase: Phase::Implement, refs: refs.clone(), last_clean_check: None };
+    let hash = format!("fnv:{:016x}", veneer::laws::fnv64(&serde_json::to_vec(&s).unwrap()));
+
+    let legacy = LegacyOnDisk { phase: s.phase, refs: refs.clone(), last_clean_check: None, hash };
+    let body = toon_rust::to_string(&legacy).unwrap();
+    assert!(!body.contains("version"), "fabricated legacy file must carry no version field: {body}");
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/state.toon"), body).unwrap();
+
+    let loaded = load(dir.path()).expect("a pre-1.0 (version-less) TOON state file must load");
+    assert_eq!(loaded.phase, Phase::Implement);
+    assert_eq!(loaded.refs, refs, "refs must be taken raw, byte-identical to the fabricated originals");
+    assert_eq!(loaded.last_clean_check, None);
+}
+
+#[test]
+fn legacy_versionless_toon_state_migrates_version_on_next_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut refs = std::collections::BTreeMap::new();
+    refs.insert("pr".to_string(), "https://github.com/x/y/pull/2?q=a%20b".to_string());
+    let s = State { phase: Phase::Implement, refs: refs.clone(), last_clean_check: None };
+    let hash = format!("fnv:{:016x}", veneer::laws::fnv64(&serde_json::to_vec(&s).unwrap()));
+    let legacy = LegacyOnDisk { phase: s.phase, refs, last_clean_check: None, hash };
+    let body = toon_rust::to_string(&legacy).unwrap();
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/state.toon"), body).unwrap();
+
+    // The next write (any state mutation) must upgrade the wire: version: 1
+    // appears, refs are armored, and the file keeps loading correctly.
+    let written = set_phase(dir.path(), Phase::Verify, &[]).unwrap();
+    let on_disk = std::fs::read_to_string(dir.path().join(".veneer/state.toon")).unwrap();
+    assert!(on_disk.contains("version: 1"), "migrated write must carry version: 1: {on_disk}");
+    let loaded = load(dir.path()).unwrap();
+    assert_eq!(loaded, written);
+    assert_eq!(loaded.phase, Phase::Verify);
+    assert_eq!(loaded.refs["pr"], "https://github.com/x/y/pull/2?q=a%20b");
+}
+
+/// The on-disk shape of a *future* `.veneer/state.toon` this binary doesn't
+/// understand: a `version` newer than `STATE_VERSION`. Distinct from the
+/// version-less legacy shape (`LegacyOnDisk`) only by the explicit field.
+#[derive(serde::Serialize)]
+struct FutureOnDisk {
+    version: u32,
+    phase: Phase,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    refs: std::collections::BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_clean_check: Option<u64>,
+    hash: String,
+}
+
+#[test]
+fn unsupported_future_state_wire_version_is_an_explicit_finding() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = State { phase: Phase::Implement, refs: Default::default(), last_clean_check: None };
+    let hash = format!("fnv:{:016x}", veneer::laws::fnv64(&serde_json::to_vec(&s).unwrap()));
+    let future = FutureOnDisk { version: 2, phase: s.phase, refs: s.refs, last_clean_check: None, hash };
+    let body = toon_rust::to_string(&future).unwrap();
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/state.toon"), body).unwrap();
+
+    let err = load(dir.path()).expect_err("a version this binary doesn't understand must not silently load");
+    assert!(
+        err.message.contains("unsupported wire version 2"),
+        "must name the real problem, not a generic hash mismatch: {}",
+        err.message
+    );
+}
+
+use proptest::prelude::*;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    #[test]
+    fn state_store_load_roundtrips(
+        phase_idx in 0usize..4,
+        key in "[a-zA-Z0-9_./-]{1,12}",
+        val in any::<String>(),
+        witness in proptest::option::of(any::<u64>()),
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let phase = [Phase::Plan, Phase::Implement, Phase::Verify, Phase::Ship][phase_idx];
+        let mut refs = std::collections::BTreeMap::new();
+        refs.insert(key, val);
+        let s = veneer::state::State { phase, refs, last_clean_check: witness };
+        veneer::state::store(dir.path(), &s).unwrap();
+        prop_assert_eq!(load(dir.path()).unwrap(), s);
+    }
 }

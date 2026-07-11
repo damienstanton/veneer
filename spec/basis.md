@@ -12,6 +12,7 @@ harness actually uses. It names no host language, because veneer prescribes
 - Martin-Löf, P. *Constructive Mathematics and Computer Programming*. 1979.
 - Constable, R. et al. *Implementing Mathematics with the NuPRL Proof Development System*. 1986.
 - Bauer, A. *Algebraic Effects and Handlers*.
+- Patterson, D., Wagner, A., Ahmed, A. *Semantic Encapsulation using Linking Types*. TyDe 2023. (The oxidation lift's framing — see `spec/oxidation.md`.)
 
 ---
 

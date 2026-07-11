@@ -102,11 +102,17 @@ fn canonical_bytes(s: &State) -> Vec<u8> {
     serde_json::to_vec(s).expect("state serialization is infallible")
 }
 
+/// Current on-disk state wire version. Version 1 armors refs via `wire`; a
+/// missing/0 version is a pre-1.0 file whose refs are raw.
+const STATE_VERSION: u32 = 1;
+
 /// The on-disk document: the logical state plus its embedded integrity hash.
 /// `skip_serializing_if` keeps absent-equivalent fields out of the encoding so
 /// TOON — which renders an empty value for null/empty — round-trips exactly.
 #[derive(Serialize, Deserialize)]
 struct OnDisk {
+    #[serde(default)]
+    version: u32,
     #[serde(default = "default_phase")]
     phase: Phase,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -190,7 +196,35 @@ pub fn load(root: &Path) -> Result<State, Finding> {
     } else {
         serde_json::from_str(&raw).map_err(|_| corrupt("state file is not valid JSON"))?
     };
-    let state = State { phase: od.phase, refs: od.refs, last_clean_check: od.last_clean_check };
+    // A version newer than this binary understands is a distinct failure
+    // from ordinary corruption: the file is well-formed, just written by a
+    // future veneer under wire rules this binary doesn't have. Name it
+    // explicitly rather than falling through to a generic hash-mismatch
+    // message once the (correctly skipped, since we don't know its armor)
+    // refs fail to reproduce the recorded hash.
+    if is_toon && od.version > STATE_VERSION {
+        return Err(Finding::error(
+            Law::Protocol,
+            source,
+            None,
+            &format!(
+                "state file has unsupported wire version {} (this veneer understands up to {STATE_VERSION})",
+                od.version
+            ),
+            Some("upgrade veneer to a version that understands this state file, or run `veneer state reset` to start a fresh cycle"),
+        ));
+    }
+    // Refs are armored only from version 1 onward. Legacy JSON, and a
+    // pre-1.0 TOON file (version absent/0, written by an older veneer before
+    // the wire was versioned), wrote refs raw — decoding those unconditionally
+    // would corrupt any ref that happens to contain a valid `%XX` sequence or
+    // a bare `%`, so only a version-1 TOON document is decoded.
+    let refs = if is_toon && od.version == STATE_VERSION {
+        od.refs.into_iter().map(|(k, v)| (crate::wire::decode(&k), crate::wire::decode(&v))).collect()
+    } else {
+        od.refs
+    };
+    let state = State { phase: od.phase, refs, last_clean_check: od.last_clean_check };
     let expect = format!("fnv:{:016x}", fnv64(&canonical_bytes(&state)));
     if od.hash != expect {
         return Err(corrupt("state file content hash mismatch"));
@@ -207,8 +241,12 @@ pub fn load(root: &Path) -> Result<State, Finding> {
 pub fn store(root: &Path, s: &State) -> std::io::Result<()> {
     std::fs::create_dir_all(root.join(".veneer"))?;
     let od = OnDisk {
+        version: STATE_VERSION,
         phase: s.phase,
-        refs: s.refs.clone(),
+        // Refs are the only free-text field in the state; armor them for the
+        // TOON wire (see wire.rs). The integrity hash is over the *logical*
+        // state, so armoring the wire never changes the witness.
+        refs: s.refs.iter().map(|(k, v)| (crate::wire::encode(k), crate::wire::encode(v))).collect(),
         last_clean_check: s.last_clean_check,
         hash: format!("fnv:{:016x}", fnv64(&canonical_bytes(s))),
     };
@@ -291,4 +329,38 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
         Finding::error(Law::Protocol, ".veneer/state.toon", None, &format!("cannot write state: {e}"), None)
     })?;
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct W {
+        #[serde(with = "clean_check_repr")]
+        v: Option<u64>,
+    }
+
+    #[test]
+    fn clean_check_accepts_string_number_null_and_empty() {
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":"18446744073709551615"}"#).unwrap().v, Some(u64::MAX));
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":42}"#).unwrap().v, Some(42));
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":null}"#).unwrap().v, None);
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":""}"#).unwrap().v, None);
+    }
+
+    #[test]
+    fn clean_check_rejects_negative_bool_and_garbage() {
+        assert!(serde_json::from_str::<W>(r#"{"v":-1}"#).is_err());
+        assert!(serde_json::from_str::<W>(r#"{"v":true}"#).is_err());
+        assert!(serde_json::from_str::<W>(r#"{"v":"abc"}"#).is_err());
+    }
+
+    #[test]
+    fn clean_check_serializes_full_width_u64_as_decimal_string() {
+        assert_eq!(
+            serde_json::to_string(&W { v: Some(u64::MAX) }).unwrap(),
+            r#"{"v":"18446744073709551615"}"#
+        );
+    }
 }

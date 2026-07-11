@@ -176,6 +176,18 @@ proptest! {
     }
 }
 
+proptest! {
+    #[test]
+    fn eval_is_final(bs in proptest::collection::vec(any::<u8>(), 1..16)) {
+        // Finality (basis §III): once canonical, evaluation is the identity.
+        let e = from_bytes(&bs);
+        let mut gas = 1_000_000u64;
+        let v1 = eval(&e, &mut gas).unwrap();
+        let mut gas2 = 1_000_000u64;
+        prop_assert_eq!(eval(&v1, &mut gas2).unwrap(), v1);
+    }
+}
+
 #[test]
 fn check_eq_consumes_gas() {
     let mut gas = 10; // far less than needed for 2000-deep structural compare
@@ -251,4 +263,22 @@ fn rec_depth_amplification_is_bounded_not_an_abort() {
         matches!(result, Err(KernelError::TooDeep) | Err(KernelError::OutOfGas)),
         "expected bounded error, got {result:?}"
     );
+}
+
+#[test]
+fn rec_step_binders_shadow_outer_substitution() {
+    // (λn. rec(0; n, acc. n)(succ(0))) 9 — the step's `n` is the predecessor
+    // (0), not the outer argument (9); subst must respect the rec binders.
+    let body = Expr::rec(Expr::Zero, "n", "acc", Expr::var("n"), Expr::succ(Expr::Zero));
+    let e = Expr::ap(Expr::lam("n", body), nat(9));
+    let mut gas = 10_000;
+    assert_eq!(eval(&e, &mut gas).unwrap(), Expr::Zero);
+}
+
+#[test]
+fn function_equality_is_alpha_across_rec_binders() {
+    let f = Expr::lam("x", Expr::rec(Expr::Zero, "p", "a", Expr::succ(Expr::var("a")), Expr::var("x")));
+    let g = Expr::lam("y", Expr::rec(Expr::Zero, "q", "b", Expr::succ(Expr::var("b")), Expr::var("y")));
+    let mut gas = 10_000;
+    assert!(check_eq(&Expr::arrow(Expr::Nat, Expr::Nat), &f, &g, &mut gas).unwrap());
 }

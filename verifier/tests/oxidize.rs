@@ -58,6 +58,13 @@ fn findings_are_sorted_for_determinism() {
     assert_eq!(fs[1].location.line, Some(9));
 }
 
+#[test]
+fn identical_diagnostics_are_deduplicated() {
+    let line = r#"{"reason":"compiler-message","message":{"message":"mismatched types","level":"error","spans":[{"line_start":3,"is_primary":true}]}}"#;
+    let fs = veneer::oxidize::parse_diagnostics(&format!("{line}\n{line}\n"));
+    assert_eq!(fs.len(), 1, "the finding trace must be minimal: {fs:?}");
+}
+
 use std::path::Path;
 
 fn cargo_available() -> bool {

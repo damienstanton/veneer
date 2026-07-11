@@ -199,6 +199,41 @@ fn lifted_ambiguous_lifetime_signature_yields_a_real_oxidation_finding() {
 }
 
 #[test]
+fn lift_shadow_skips_impl_trait_signatures_rather_than_erasing_the_trait() {
+    let sigs = vec!["pub fn show(x: impl Display) -> String".to_string()];
+    let shadow = veneer::graph::lift_shadow(&sigs);
+    assert!(!shadow.contains("fn show"), "impl-trait must be skipped, got:\n{shadow}");
+}
+
+#[test]
+fn lift_shadow_skips_dyn_trait_signatures() {
+    let sigs = vec!["pub fn log(e: &dyn Error) -> bool".to_string()];
+    let shadow = veneer::graph::lift_shadow(&sigs);
+    assert!(!shadow.contains("fn log"), "dyn-trait must be skipped, got:\n{shadow}");
+}
+
+#[test]
+fn lift_shadow_does_not_mistake_identifiers_containing_impl_or_dyn_for_keywords() {
+    let sigs = vec!["pub fn f(implementation: Foo, dynamic: Bar) -> bool".to_string()];
+    let shadow = veneer::graph::lift_shadow(&sigs);
+    assert!(
+        shadow.contains("pub fn f<T0, T1>(implementation: T0, dynamic: T1) -> bool"),
+        "word-bounded keyword detection required, got:\n{shadow}"
+    );
+}
+
+#[test]
+fn impl_trait_signature_produces_no_false_semantic_findings() {
+    if !cargo_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let shadow =
+        veneer::graph::lift_shadow(&["pub fn show(x: impl ToString) -> String".to_string()]);
+    assert!(ox(dir.path(), &shadow).is_empty(), "skipped signature must yield an empty, clean shadow");
+}
+
+#[test]
 fn build_attributes_semantic_findings_to_the_real_file_not_the_generic_shadow_label() {
     if !cargo_available() {
         eprintln!("skipping: cargo not on PATH");
@@ -324,16 +359,54 @@ fn unreadable_graph_file_is_a_protocol_finding_not_a_silent_default() {
 }
 
 #[test]
-fn tampered_graph_toon_is_a_protocol_finding() {
+fn tampered_graph_toon_self_heals_to_empty_default() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.rs"), "pub fn f() {}\n").unwrap();
-    let g = build(dir.path(), &Config::default()).unwrap();
-    store(dir.path(), &g).unwrap();
+    std::fs::write(dir.path().join("m.rs"), "pub fn f() {}\n").unwrap();
+    let g = veneer::graph::build(dir.path(), &veneer::laws::Config::default()).unwrap();
+    veneer::graph::store(dir.path(), &g).unwrap();
     let p = dir.path().join(".veneer/graph.toon");
-    let body = std::fs::read_to_string(&p).unwrap();
-    assert!(body.contains("fnv:"));
-    std::fs::write(&p, body.replacen("fnv:", "fnv:ff", 1)).unwrap();
-    assert_eq!(load(dir.path()).unwrap_err().law, veneer::laws::Law::Protocol);
+    let raw = std::fs::read_to_string(&p).unwrap();
+    // Tamper at the wire level: paths are armored, so "m.rs" is "m%2Ers".
+    assert!(raw.contains("m%2Ers"), "wire body: {raw}");
+    std::fs::write(&p, raw.replace("m%2Ers", "x%2Ers")).unwrap();
+    let healed = veneer::graph::load(dir.path()).expect("corruption of a cache is absence, not an error");
+    assert_eq!(healed, veneer::graph::Graph::default());
+    assert!(veneer::graph::is_stale(&healed, dir.path()));
+}
+
+#[test]
+fn malformed_graph_toon_self_heals_to_empty_default() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/graph.toon"), "not toon {{{").unwrap();
+    assert_eq!(veneer::graph::load(dir.path()).unwrap(), veneer::graph::Graph::default());
+}
+
+#[test]
+fn old_version_graph_self_heals_to_empty_default() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("m.rs"), "pub fn f() {}\n").unwrap();
+    let g = veneer::graph::build(dir.path(), &veneer::laws::Config::default()).unwrap();
+    veneer::graph::store(dir.path(), &g).unwrap();
+    let p = dir.path().join(".veneer/graph.toon");
+    let raw = std::fs::read_to_string(&p).unwrap();
+    assert!(raw.contains("version: 1"), "store must write the format version, got:\n{raw}");
+    std::fs::write(&p, raw.replace("version: 1", "version: 999")).unwrap();
+    assert_eq!(veneer::graph::load(dir.path()).unwrap(), veneer::graph::Graph::default());
+}
+
+#[test]
+fn versionless_graph_from_an_older_veneer_self_heals() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("m.rs"), "pub fn f() {}\n").unwrap();
+    let g = veneer::graph::build(dir.path(), &veneer::laws::Config::default()).unwrap();
+    veneer::graph::store(dir.path(), &g).unwrap();
+    let p = dir.path().join(".veneer/graph.toon");
+    let raw = std::fs::read_to_string(&p).unwrap();
+    // Strip the version line entirely — the pre-1.0 wire shape.
+    let stripped: String = raw.lines().filter(|l| !l.starts_with("version:")).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&p, stripped).unwrap();
+    assert_eq!(veneer::graph::load(dir.path()).unwrap(), veneer::graph::Graph::default());
 }
 
 #[test]

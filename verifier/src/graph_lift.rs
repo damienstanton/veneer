@@ -84,6 +84,9 @@ fn coalesce_paths(tokens: Vec<(String, bool)>) -> Vec<(String, bool)> {
 /// existing `<'a>` produces invalid syntax (`f<'a><T0>`), and this function
 /// cannot reliably merge the two lists, so it does not try. The signature
 /// still appears in `signatures`; it just isn't part of `canonical_form`.
+/// Signatures with trait-position types (`impl Trait`, `dyn Trait`) are
+/// skipped for the same reason: erasing a trait to a type parameter
+/// manufactures errors.
 /// `where`-clauses are not specially handled and may still fail to compile —
 /// that surfaces as a finding like any other.
 fn lift_fn_signature(sig: &str) -> Option<String> {
@@ -108,6 +111,17 @@ fn lift_fn_signature(sig: &str) -> Option<String> {
     let mut erased = String::new();
     let mut generics: Vec<String> = Vec::new();
     let coalesced = coalesce_paths(tokenize(params_and_ret));
+
+    // Trait-position types cannot be generic-erased: `impl Display` / `&dyn
+    // Error` would erase the *trait* to a type parameter (`impl T0`), which
+    // rustc rejects — a false finding manufactured by the lift, not a property
+    // of the code. Sound by omission: skip, leaving the signature as a plain
+    // recorded fact (spec/oxidation.md, skip S4). The tokenizer word-bounds
+    // this test, so identifiers like `implementation` are not mistaken.
+    if coalesced.iter().any(|(t, is_ident)| *is_ident && (t == "impl" || t == "dyn")) {
+        return None;
+    }
+
     let mut i = 0;
     while i < coalesced.len() {
         let (tok, is_ident) = &coalesced[i];
@@ -187,4 +201,74 @@ fn lift_fn_signature(sig: &str) -> Option<String> {
 pub fn lift_shadow(signatures: &[String]) -> String {
     let bodies: Vec<String> = signatures.iter().filter_map(|s| lift_fn_signature(s)).collect();
     format!("#![allow(unused, dead_code)]\n\n{}\n", bodies.join("\n\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runs(s: &str) -> Vec<(String, bool)> {
+        tokenize(s)
+    }
+
+    #[test]
+    fn tokenize_splits_identifier_and_symbol_runs() {
+        assert_eq!(
+            runs("&mut Vec<Foo>"),
+            vec![
+                ("&".to_string(), false),
+                ("mut".to_string(), true),
+                (" ".to_string(), false),
+                ("Vec".to_string(), true),
+                ("<".to_string(), false),
+                ("Foo".to_string(), true),
+                (">".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenize_groups_adjacent_symbols_into_one_run() {
+        assert_eq!(runs("():: "), vec![("():: ".to_string(), false)]);
+    }
+
+    #[test]
+    fn coalesce_merges_qualified_paths_into_one_identifier() {
+        assert_eq!(
+            coalesce_paths(runs("a::b::C")),
+            vec![("a::b::C".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn coalesce_requires_exact_double_colon_run() {
+        // ":: " is one symbol run, not the "::" separator — no merge.
+        assert_eq!(
+            coalesce_paths(runs("a:: C")),
+            vec![("a".to_string(), true), (":: ".to_string(), false), ("C".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn lift_rejects_non_pub_fn_lines() {
+        assert_eq!(lift_fn_signature("fn private(x: Foo)"), None);
+        assert_eq!(lift_fn_signature("pub struct Foo"), None);
+    }
+
+    #[test]
+    fn lift_reemits_text_glued_after_a_closed_generic_span() {
+        // `String>)` is one symbol run; the `)` after the closing `>` must
+        // survive the erased-span skip.
+        assert_eq!(
+            lift_fn_signature("pub fn get(m: &Registry<String>) -> bool"),
+            Some("pub fn get<T0>(m: &T0) -> bool { todo!() }".to_string())
+        );
+    }
+
+    #[test]
+    fn lift_is_total_on_pathological_input() {
+        for s in ["pub fn ", "pub fn (", "pub fn f(", "pub fn f<(", "pub fn f() -> <"] {
+            let _ = lift_fn_signature(s); // must not panic
+        }
+    }
 }
