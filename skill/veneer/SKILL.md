@@ -98,6 +98,8 @@ changed since the last refresh; run `veneer check` (or `veneer graph build`
 to force it) to refresh. The graph has no bearing on `check` or the ship
 gate — querying it, or ignoring it entirely, is always safe.
 
+The graph cache self-heals: a corrupt or old-format cache reads as never-built and regenerates on the next clean check — never a finding.
+
 ## Phase: plan
 
 Refine the request into a ticket. No artifact ceremony — the issue body is

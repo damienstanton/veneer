@@ -125,6 +125,8 @@ incremental checks and `cold_timeout_ms` (default 30000) on the one-time
 scaffold prime; a timeout is a Protocol finding. Oxidation is a check within the
 existing phases, not a new phase.
 
+The formal statement — what the lift preserves, erases, and skips, and the exact scope of the guarantee — is `spec/oxidation.md`.
+
 **Trust boundary.** Oxidation runs `cargo check` on the supplied shadow, and a
 `cargo check` *executes code*: built-in macros (`include_str!`, `env!`) and any
 procedural macros expand at check time and can read files or the environment and
@@ -156,6 +158,8 @@ for the project. Running it through the **existing** `oxidize::oxidize()` (no
 second semantic-analysis engine) attaches any real rustc-grade findings —
 lifetime ambiguity, trait-bound failures, anything rustc itself would catch —
 as that entry's `semantic_findings`.
+
+See `spec/oxidation.md` for the lift's preservation invariants and soundness statement.
 
 Output is `.veneer/graph.toon` (TOON-encoded), with its own FNV-1a content-hash
 witness and its own staleness witness (`built_from`, a tree hash) — both fully
