@@ -324,16 +324,52 @@ fn unreadable_graph_file_is_a_protocol_finding_not_a_silent_default() {
 }
 
 #[test]
-fn tampered_graph_toon_is_a_protocol_finding() {
+fn tampered_graph_toon_self_heals_to_empty_default() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.rs"), "pub fn f() {}\n").unwrap();
-    let g = build(dir.path(), &Config::default()).unwrap();
-    store(dir.path(), &g).unwrap();
+    std::fs::write(dir.path().join("m.rs"), "pub fn f() {}\n").unwrap();
+    let g = veneer::graph::build(dir.path(), &veneer::laws::Config::default()).unwrap();
+    veneer::graph::store(dir.path(), &g).unwrap();
     let p = dir.path().join(".veneer/graph.toon");
-    let body = std::fs::read_to_string(&p).unwrap();
-    assert!(body.contains("fnv:"));
-    std::fs::write(&p, body.replacen("fnv:", "fnv:ff", 1)).unwrap();
-    assert_eq!(load(dir.path()).unwrap_err().law, veneer::laws::Law::Protocol);
+    let raw = std::fs::read_to_string(&p).unwrap();
+    std::fs::write(&p, raw.replace("m.rs", "x.rs")).unwrap();
+    let healed = veneer::graph::load(dir.path()).expect("corruption of a cache is absence, not an error");
+    assert_eq!(healed, veneer::graph::Graph::default());
+    assert!(veneer::graph::is_stale(&healed, dir.path()));
+}
+
+#[test]
+fn malformed_graph_toon_self_heals_to_empty_default() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".veneer")).unwrap();
+    std::fs::write(dir.path().join(".veneer/graph.toon"), "not toon {{{").unwrap();
+    assert_eq!(veneer::graph::load(dir.path()).unwrap(), veneer::graph::Graph::default());
+}
+
+#[test]
+fn old_version_graph_self_heals_to_empty_default() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("m.rs"), "pub fn f() {}\n").unwrap();
+    let g = veneer::graph::build(dir.path(), &veneer::laws::Config::default()).unwrap();
+    veneer::graph::store(dir.path(), &g).unwrap();
+    let p = dir.path().join(".veneer/graph.toon");
+    let raw = std::fs::read_to_string(&p).unwrap();
+    assert!(raw.contains("version: 1"), "store must write the format version, got:\n{raw}");
+    std::fs::write(&p, raw.replace("version: 1", "version: 999")).unwrap();
+    assert_eq!(veneer::graph::load(dir.path()).unwrap(), veneer::graph::Graph::default());
+}
+
+#[test]
+fn versionless_graph_from_an_older_veneer_self_heals() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("m.rs"), "pub fn f() {}\n").unwrap();
+    let g = veneer::graph::build(dir.path(), &veneer::laws::Config::default()).unwrap();
+    veneer::graph::store(dir.path(), &g).unwrap();
+    let p = dir.path().join(".veneer/graph.toon");
+    let raw = std::fs::read_to_string(&p).unwrap();
+    // Strip the version line entirely — the pre-1.0 wire shape.
+    let stripped: String = raw.lines().filter(|l| !l.starts_with("version:")).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&p, stripped).unwrap();
+    assert_eq!(veneer::graph::load(dir.path()).unwrap(), veneer::graph::Graph::default());
 }
 
 #[test]
