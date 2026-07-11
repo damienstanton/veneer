@@ -10,6 +10,15 @@ judge; you are the prover. Trust your own planning; let the binary verify.
 
 ## The three laws
 
+The laws are the operational form of veneer's CTT basis (`spec/basis.md`): types
+are behavioral specifications, equality is structural, state change is a declared
+effect. They are **language-polymorphic** — where the host compiler enforces them
+(ADTs, signatures, borrow checking) let it; where it cannot (dynamic or untyped
+languages) **you** enforce them as protocol: tagged unions with total dispatch and
+no default fallthrough, a documented public surface, discriminated return values
+in place of exceptions, freeze-at-boundaries in place of value semantics. The
+discipline is identical in every language; only who checks it changes.
+
 1. **Type-level constraint.** Compose via the host language's closest
    approximation of ADTs and sealed interfaces: sum types with exhaustive
    handling, products, explicit effects. Errors are data, never naked
@@ -79,6 +88,11 @@ into the shadow you authored. Fix the *real* design the shadow models — keep t
 shadow faithful to it, don't just patch the shadow to compile — then re-oxidize
 (`veneer oxidize --file <shadow.rs>`). It is an on-demand check; running it
 during implement (before writing the real code) or verify is encouraged.
+The verdict is about the *shadow*, not your code: a clean oxidation proves the
+modeled ownership story coheres, so a shadow that misrepresents the design gives
+a false pass — faithfulness is your obligation, not the binary's
+(`spec/oxidation.md`, N1). The lift is Rust-only; on non-Rust files this law
+never fires, and the other four laws carry the discipline.
 
 ## Knowledge graph
 
@@ -99,6 +113,15 @@ to force it) to refresh. The graph has no bearing on `check` or the ship
 gate — querying it, or ignoring it entirely, is always safe.
 
 The graph cache self-heals: a corrupt or old-format cache reads as never-built and regenerates on the next clean check — never a finding.
+
+**Token discipline — prefer the graph to raw source.** Whenever you need only a
+dependency's *contract*, `veneer graph query <path>` and read its `signatures`
+and `doc_summary` — a fraction of the tokens of the file. For `.rs` files the
+entry's `semantic_findings` already carry the module's oxidation verdict, so you
+can see its ownership story without re-oxidizing. Open full source only when the
+entry is `stale`, missing, or the task genuinely needs an implementation rather
+than a signature. Loading whole files to learn what a one-line signature would
+have told you is the most common avoidable token cost in the loop.
 
 ## Phase: plan
 
