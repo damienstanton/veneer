@@ -5,7 +5,7 @@ use crate::laws::{findings_json_compact, load_config, run_checks, Finding, Law};
 use crate::state::{load, set_phase, Phase};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content};
+use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -63,19 +63,19 @@ impl VeneerServer {
         let cfg = match load_config(&self.root) {
             Ok(c) => c,
             Err(f) => {
-                return CallToolResult::success(vec![Content::text(findings_json_compact(&[f]))])
+                return CallToolResult::success(vec![ContentBlock::text(findings_json_compact(&[f]))])
             }
         };
         let paths: Vec<PathBuf> = args.0.paths.iter().map(PathBuf::from).collect();
         if args.0.diff.is_none() && paths.is_empty() {
             if let Ok(s) = crate::state::load(&self.root) {
                 if s.last_clean_check == Some(crate::laws::clean_hash(&self.root)) {
-                    return CallToolResult::success(vec![Content::text("[]".to_string())]);
+                    return CallToolResult::success(vec![ContentBlock::text("[]".to_string())]);
                 }
             }
         }
         let findings = run_checks(&self.root, &paths, args.0.diff.as_deref(), &cfg);
-        CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
+        CallToolResult::success(vec![ContentBlock::text(findings_json_compact(&findings))])
     }
 
     #[tool(description = "Type-check an agent-authored Rust shadow skeleton (oxidation). Returns a JSON array of Oxidation findings; empty means type-coherent.")]
@@ -83,11 +83,11 @@ impl VeneerServer {
         let cfg = match load_config(&self.root) {
             Ok(c) => c,
             Err(f) => {
-                return CallToolResult::success(vec![Content::text(findings_json_compact(&[f]))])
+                return CallToolResult::success(vec![ContentBlock::text(findings_json_compact(&[f]))])
             }
         };
         let findings = crate::oxidize::oxidize(&self.root, &args.0.shadow, &cfg.oxidize);
-        CallToolResult::success(vec![Content::text(findings_json_compact(&findings))])
+        CallToolResult::success(vec![ContentBlock::text(findings_json_compact(&findings))])
     }
 
     #[tool(description = "Build or query the codebase knowledge graph: cached per-file signatures, doc summaries, LoC, complexity, and (Rust files) real semantic findings lifted through oxidize. action=\"build\" regenerates the cache; action=\"query\" (with `query`: a root-relative path) returns that file's cached entry plus whether the cache is stale.")]
@@ -97,7 +97,7 @@ impl VeneerServer {
             "build" => {
                 let cfg = match load_config(&self.root) {
                     Ok(c) => c,
-                    Err(f) => return CallToolResult::success(vec![Content::text(findings_json_compact(&[f]))]),
+                    Err(f) => return CallToolResult::success(vec![ContentBlock::text(findings_json_compact(&[f]))]),
                 };
                 match crate::graph::build(&self.root, &cfg) {
                     Ok(g) => match crate::graph::store(&self.root, &g) {
@@ -136,7 +136,7 @@ impl VeneerServer {
             },
             _ => findings_json_compact(&[Finding::error(Law::Protocol, "<mcp>", None, "action must be build|query", None)]),
         };
-        CallToolResult::success(vec![Content::text(body)])
+        CallToolResult::success(vec![ContentBlock::text(body)])
     }
 
     #[tool(description = "Read or transition the veneer lifecycle state (plan → implement → verify → ship). Invalid transitions and a stale ship gate return protocol findings.")]
@@ -177,7 +177,7 @@ impl VeneerServer {
                 None,
             )]),
         };
-        CallToolResult::success(vec![Content::text(body)])
+        CallToolResult::success(vec![ContentBlock::text(body)])
     }
 }
 
