@@ -301,3 +301,37 @@ pub fn set_phase(root: &Path, requested: Phase, refs: &[(String, String)]) -> Re
     })?;
     Ok(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct W {
+        #[serde(with = "clean_check_repr")]
+        v: Option<u64>,
+    }
+
+    #[test]
+    fn clean_check_accepts_string_number_null_and_empty() {
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":"18446744073709551615"}"#).unwrap().v, Some(u64::MAX));
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":42}"#).unwrap().v, Some(42));
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":null}"#).unwrap().v, None);
+        assert_eq!(serde_json::from_str::<W>(r#"{"v":""}"#).unwrap().v, None);
+    }
+
+    #[test]
+    fn clean_check_rejects_negative_bool_and_garbage() {
+        assert!(serde_json::from_str::<W>(r#"{"v":-1}"#).is_err());
+        assert!(serde_json::from_str::<W>(r#"{"v":true}"#).is_err());
+        assert!(serde_json::from_str::<W>(r#"{"v":"abc"}"#).is_err());
+    }
+
+    #[test]
+    fn clean_check_serializes_full_width_u64_as_decimal_string() {
+        assert_eq!(
+            serde_json::to_string(&W { v: Some(u64::MAX) }).unwrap(),
+            r#"{"v":"18446744073709551615"}"#
+        );
+    }
+}
