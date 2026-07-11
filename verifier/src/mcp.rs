@@ -185,7 +185,7 @@ impl VeneerServer {
 #[tool_handler(
     name = "veneer",
     version = "1.0.0",
-    instructions = "veneer verifier: run veneer_check for law findings; veneer_state to read/transition the lifecycle."
+    instructions = "veneer verifier: veneer_check for law findings; veneer_state to read/transition the lifecycle; veneer_oxidize to type-check a Rust shadow; veneer_graph to build/query the knowledge graph."
 )]
 impl ServerHandler for VeneerServer {}
 

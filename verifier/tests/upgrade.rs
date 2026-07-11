@@ -58,7 +58,8 @@ fn old_veneer_project_upgrades_with_zero_manual_steps() {
     let raw = std::fs::read_to_string(root.join(".veneer/graph.toon")).unwrap();
     assert!(raw.contains("version:"), "regenerated graph carries the format version");
 
-    // 4. The first state write migrates: TOON appears, legacy JSON removed.
+    // 4. State was already migrated to TOON by step 3's clean-check witness
+    // write (record_clean_check); this step verifies TOON stays authoritative.
     let out = veneer(root, &["state", "set", "implement"]);
     assert!(out.status.success());
     assert!(root.join(".veneer/state.toon").exists());

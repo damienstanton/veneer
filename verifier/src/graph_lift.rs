@@ -84,7 +84,9 @@ fn coalesce_paths(tokens: Vec<(String, bool)>) -> Vec<(String, bool)> {
 /// existing `<'a>` produces invalid syntax (`f<'a><T0>`), and this function
 /// cannot reliably merge the two lists, so it does not try. The signature
 /// still appears in `signatures`; it just isn't part of `canonical_form`.
-/// Signatures with trait-position types (`impl Trait`, `dyn Trait`) are skipped for the same reason: erasing a trait to a type parameter manufactures errors.
+/// Signatures with trait-position types (`impl Trait`, `dyn Trait`) are
+/// skipped for the same reason: erasing a trait to a type parameter
+/// manufactures errors.
 /// `where`-clauses are not specially handled and may still fail to compile —
 /// that surfaces as a finding like any other.
 fn lift_fn_signature(sig: &str) -> Option<String> {

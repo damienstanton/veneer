@@ -76,12 +76,13 @@ is the on-demand exception: it decodes the full stored state (including
 
 ## State file
 
-`.veneer/state.toon`: `{phase, refs, last_clean_check, hash}` encoded as TOON
+`.veneer/state.toon`: `{version, phase, refs, last_clean_check, hash}` encoded as TOON
 (token-efficient JSON) where `hash` is the FNV-1a content hash of the logical
 state — taken over its canonical JSON form, so the witness is format-independent
 and survives migration. Replayed writes converge; tampering is detected as a
 protocol finding. `last_clean_check` is stored as a quoted decimal string so the
 full-width u64 round-trips through TOON exactly. Never edit by hand.
+
 Free-text fields (`refs`) are percent-encoded to pure ASCII on the TOON wire
 (the same armor the knowledge graph uses — toon-rust 0.1.3 mishandles many
 scalar shapes, so free text is percent-encoded to a conservatively safe ASCII
@@ -91,7 +92,13 @@ output carry normal UTF-8.
 A project written by an older veneer carries a legacy `.veneer/state.json`.
 `load` reads either file (TOON preferred, JSON fallback, decoded identically);
 the next state-mutating write produces `.veneer/state.toon` and removes the
-legacy JSON. Migration is seamless and invisible.
+legacy JSON. Migration is seamless and invisible. Older veneers also wrote
+`.veneer/state.toon` itself un-armored and without a `version` field (refs
+stored raw, not percent-encoded); such a file is recognized by its
+missing/zero `version`, loads with its refs taken raw rather than
+percent-decoded (an unconditional decode could corrupt a raw ref that
+happens to contain a valid `%XX` sequence), and migrates — gaining `version:
+1` and armored refs — on the next write, exactly like the legacy-JSON case.
 
 On the `ship → plan` transition, `last_clean_check` is cleared so that a stale
 hash from a prior cycle cannot satisfy the ship gate of the next cycle; every

@@ -102,11 +102,17 @@ fn canonical_bytes(s: &State) -> Vec<u8> {
     serde_json::to_vec(s).expect("state serialization is infallible")
 }
 
+/// Current on-disk state wire version. Version 1 armors refs via `wire`; a
+/// missing/0 version is a pre-1.0 file whose refs are raw.
+const STATE_VERSION: u32 = 1;
+
 /// The on-disk document: the logical state plus its embedded integrity hash.
 /// `skip_serializing_if` keeps absent-equivalent fields out of the encoding so
 /// TOON — which renders an empty value for null/empty — round-trips exactly.
 #[derive(Serialize, Deserialize)]
 struct OnDisk {
+    #[serde(default)]
+    version: u32,
     #[serde(default = "default_phase")]
     phase: Phase,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -190,8 +196,12 @@ pub fn load(root: &Path) -> Result<State, Finding> {
     } else {
         serde_json::from_str(&raw).map_err(|_| corrupt("state file is not valid JSON"))?
     };
-    // Legacy JSON was written unarmored; only the TOON wire percent-encodes.
-    let refs = if is_toon {
+    // Refs are armored only from version 1 onward. Legacy JSON, and a
+    // pre-1.0 TOON file (version absent/0, written by an older veneer before
+    // the wire was versioned), wrote refs raw — decoding those unconditionally
+    // would corrupt any ref that happens to contain a valid `%XX` sequence or
+    // a bare `%`, so only a version-1 TOON document is decoded.
+    let refs = if is_toon && od.version == STATE_VERSION {
         od.refs.into_iter().map(|(k, v)| (crate::wire::decode(&k), crate::wire::decode(&v))).collect()
     } else {
         od.refs
@@ -213,6 +223,7 @@ pub fn load(root: &Path) -> Result<State, Finding> {
 pub fn store(root: &Path, s: &State) -> std::io::Result<()> {
     std::fs::create_dir_all(root.join(".veneer"))?;
     let od = OnDisk {
+        version: STATE_VERSION,
         phase: s.phase,
         // Refs are the only free-text field in the state; armor them for the
         // TOON wire (see wire.rs). The integrity hash is over the *logical*

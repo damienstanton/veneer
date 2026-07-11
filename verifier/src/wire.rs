@@ -13,7 +13,11 @@
 //! `_` pass through, except that a leading digit is escaped (letters-only
 //! safety does not cover number mistyping: `0a` breaks even though both
 //! bytes are whitelisted); every other byte escapes to uppercase `%XX`.
-//! Decode is uniform percent-decoding, so old wire bytes stay decodable.
+//! Decode is uniform percent-decoding, so old wire bytes stay decodable —
+//! but only once a consumer has decided a document is actually armored:
+//! `graph` and `state` each carry a wire `version` field and gate decoding on
+//! it, because a pre-armor (version-less) document's raw bytes may contain a
+//! `%XX`-shaped substring or a bare `%` that this decoder would misinterpret.
 //! Confined to storage — all public shapes and agent-facing JSON carry
 //! normal UTF-8; only the wire format is percent-encoded.
 
