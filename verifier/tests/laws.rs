@@ -486,3 +486,14 @@ fn lockfiles_are_not_modules() {
     let cfg = Config::default();
     assert!(check_module_budget(dir.path(), &files, &cfg).is_empty());
 }
+
+use proptest::prelude::*;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    #[test]
+    fn parse_patch_is_total(s in any::<String>()) {
+        let _ = veneer::laws::parse_patch(&s); // Ok or Err, never a panic
+    }
+}

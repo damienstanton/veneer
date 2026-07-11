@@ -176,6 +176,18 @@ proptest! {
     }
 }
 
+proptest! {
+    #[test]
+    fn eval_is_final(bs in proptest::collection::vec(any::<u8>(), 1..16)) {
+        // Finality (basis §III): once canonical, evaluation is the identity.
+        let e = from_bytes(&bs);
+        let mut gas = 1_000_000u64;
+        let v1 = eval(&e, &mut gas).unwrap();
+        let mut gas2 = 1_000_000u64;
+        prop_assert_eq!(eval(&v1, &mut gas2).unwrap(), v1);
+    }
+}
+
 #[test]
 fn check_eq_consumes_gas() {
     let mut gas = 10; // far less than needed for 2000-deep structural compare

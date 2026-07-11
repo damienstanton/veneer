@@ -264,3 +264,25 @@ fn config_change_stales_clean_check() {
     let f = set_phase(dir.path(), Phase::Ship, &[]).unwrap_err();
     assert!(f.message.contains("stale"));
 }
+
+use proptest::prelude::*;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    #[test]
+    fn state_store_load_roundtrips(
+        phase_idx in 0usize..4,
+        key in "[a-z][a-z0-9_]{0,11}",
+        val in any::<String>(),
+        witness in proptest::option::of(any::<u64>()),
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let phase = [Phase::Plan, Phase::Implement, Phase::Verify, Phase::Ship][phase_idx];
+        let mut refs = std::collections::BTreeMap::new();
+        refs.insert(key, val);
+        let s = veneer::state::State { phase, refs, last_clean_check: witness };
+        veneer::state::store(dir.path(), &s).unwrap();
+        prop_assert_eq!(load(dir.path()).unwrap(), s);
+    }
+}

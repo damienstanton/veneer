@@ -366,7 +366,9 @@ fn tampered_graph_toon_self_heals_to_empty_default() {
     veneer::graph::store(dir.path(), &g).unwrap();
     let p = dir.path().join(".veneer/graph.toon");
     let raw = std::fs::read_to_string(&p).unwrap();
-    std::fs::write(&p, raw.replace("m.rs", "x.rs")).unwrap();
+    // Tamper at the wire level: paths are armored, so "m.rs" is "m%2Ers".
+    assert!(raw.contains("m%2Ers"), "wire body: {raw}");
+    std::fs::write(&p, raw.replace("m%2Ers", "x%2Ers")).unwrap();
     let healed = veneer::graph::load(dir.path()).expect("corruption of a cache is absence, not an error");
     assert_eq!(healed, veneer::graph::Graph::default());
     assert!(veneer::graph::is_stale(&healed, dir.path()));
