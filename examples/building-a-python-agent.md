@@ -40,7 +40,8 @@ its signature alone, each with one purpose. Express the plan as signatures, not
 implementations:
 
 ```python
-# types.py — the ADTs. Errors are data; results are a sum type.
+# agent_types.py — the ADTs. Errors are data; results are a sum type.
+# (named agent_types, not types — the stdlib already owns that name)
 @dataclass(frozen=True)
 class Ok:
     output: str
@@ -99,7 +100,7 @@ tool into *data*, not an exception:
 ```python
 # tools/__init__.py
 import os
-from types import Ok, Err, NotFound, IOFailure, UnknownTool, ToolResult
+from agent_types import Ok, Err, NotFound, IOFailure, UnknownTool, ToolResult
 
 TOOL_SPECS = [
     {"name": "read_file", "description": "Read a UTF-8 file by path.",
@@ -123,16 +124,20 @@ def _io(fn) -> ToolResult:
     except OSError as e:
         return Err(IOFailure(message=str(e)))
 
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
 def dispatch(name: str, args: dict) -> ToolResult:
     match name:
         case "read_file":
-            return _io(lambda: open(args["path"], encoding="utf-8").read())
+            return _io(lambda: _read(args["path"]))
         case "list_files":
             return _io(lambda: "\n".join(os.listdir(args["dir"])))
         case "grep":
             import re
             return _io(lambda: "\n".join(
-                l for l in open(args["path"], encoding="utf-8").read().splitlines()
+                l for l in _read(args["path"]).splitlines()
                 if re.search(args["pattern"], l)))
         case _:
             return Err(UnknownTool(name=name))
@@ -145,7 +150,7 @@ raises across the module boundary. IO failures are *reclassified into data*
 ### Law 2 — first-principles modules (~500 LoC, grow by adding, not enlarging)
 
 The agent is five small modules, each understandable from its signature:
-`types`, `client`, `tools`, `loop`, `main`. When you add a fourth tool, you do
+`agent_types`, `client`, `tools`, `loop`, `main`. When you add a fourth tool, you do
 **not** grow `dispatch` past its budget — you factor each tool into its own
 module inside the `tools` package and keep `__init__.py` as the thin dispatcher.
 Adding a tool is adding a module.
@@ -163,7 +168,7 @@ content block and feeds tool results back until the model stops calling tools:
 ```python
 # loop.py
 from tools import TOOL_SPECS, dispatch
-from types import Ok, Err
+from agent_types import Ok, Err
 
 def run_agent(client, question: str) -> str:
     messages = [{"role": "user", "content": question}]

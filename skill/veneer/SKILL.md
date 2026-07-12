@@ -91,8 +91,8 @@ during implement (before writing the real code) or verify is encouraged.
 The verdict is about the *shadow*, not your code: a clean oxidation proves the
 modeled ownership story coheres, so a shadow that misrepresents the design gives
 a false pass — faithfulness is your obligation, not the binary's
-(`spec/oxidation.md`, N1). The lift is Rust-only; on non-Rust files this law
-never fires, and the other four laws carry the discipline.
+(`spec/oxidation.md`, N1). The lift is Rust-only; on non-Rust files this check
+never fires, and the other four checks carry the discipline.
 
 ## Knowledge graph
 

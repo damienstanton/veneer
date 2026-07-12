@@ -54,4 +54,4 @@ The repository has four layers:
 
 ## Self-check
 
-`cargo make self-check` runs the built binary against this repo. Laws declared in `.veneer/config.toml`: `loc_soft=500`, `loc_hard=1000`, `loc_exclude=["docs/", "spec/", "examples/"]`. No sealed modules are declared for this repo.
+`cargo make self-check` runs the built binary against `verifier skill spec README.md` (see the `self-check` task in `Makefile.toml`) — not a full-tree walk. Laws come from the committed `.veneer/config.toml`: `loc_soft=500`, `loc_hard=1000`, `loc_exclude=["docs/", "spec/", "examples/"]`. No sealed modules are declared for this repo. `.veneer/config.toml` is tracked in git (only `state.toon`, `graph.toon`, and `oxidize/` are gitignored as generated artifacts), so these values are the same for every clone and CI, not a local default.

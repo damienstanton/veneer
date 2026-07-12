@@ -53,7 +53,7 @@ export type AgentError =
 // src/tools/index.ts — the sealed public surface.
 export type ToolName = "read_file" | "list_files" | "grep";
 export const toolSpecs: Anthropic.Tool[];
-export function dispatch(name: string, input: unknown): ToolResult;
+export function dispatch(name: string, input: unknown): Promise<ToolResult>;
 
 // src/client.ts — a thin wrapper over the SDK.
 export function makeClient(): Anthropic;
@@ -79,8 +79,11 @@ three laws.
 ### Law 1 — type-level constraint (ADTs, exhaustive handling, errors as data)
 
 `ToolResult` is a discriminated union, so every consumer must handle both arms.
-Dispatch is exhaustive over `ToolName` with a `never` guard that turns a missing
-case into a *compile* error:
+`name` arrives from the API as a bare `string` — an untrusted boundary value, not
+yet known to be a `ToolName` — so it is validated once at the edge with a type
+guard. Only after that does `dispatch` switch on the now-narrowed `ToolName`,
+where a `never` assignment genuinely fails to compile if a variant is ever added
+without a matching `case`:
 
 ```ts
 // src/tools/index.ts
@@ -107,9 +110,18 @@ const ioError = (e: unknown): AgentError =>
     ? { kind: "not_found", path: String((e as { path?: string }).path ?? "") }
     : { kind: "io", message: e instanceof Error ? e.message : String(e) };
 
-export function dispatch(name: string, input: unknown): ToolResult {
+const TOOL_NAMES = ["read_file", "list_files", "grep"] as const;
+
+function isToolName(name: string): name is ToolName {
+  return (TOOL_NAMES as readonly string[]).includes(name);
+}
+
+export function dispatch(name: string, input: unknown): Promise<ToolResult> {
+  if (!isToolName(name)) {
+    return Promise.resolve({ ok: false, error: { kind: "unknown_tool", name } });
+  }
   const args = input as Record<string, string>;
-  switch (name as ToolName) {
+  switch (name) {                      // name: ToolName here — genuinely exhaustive
     case "read_file":
       return runIO(() => readFile(args.path, "utf8"));
     case "list_files":
@@ -121,9 +133,9 @@ export function dispatch(name: string, input: unknown): ToolResult {
         ),
       );
     default: {
-      // If a ToolName is ever added without a case, this line stops compiling.
-      const _exhaustive: never = name as never;
-      return { ok: false, error: { kind: "unknown_tool", name: String(_exhaustive) } };
+      // Adding a ToolName variant without a case above stops this line compiling.
+      const _exhaustive: never = name;
+      return _exhaustive;
     }
   }
 }
