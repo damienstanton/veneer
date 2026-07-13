@@ -19,9 +19,9 @@ veneer mcp
 
 ## Architecture
 
-The repository has three layers:
+The repository has four layers:
 
-**`spec/`** — normative contracts. `spec/veneer.md` is the harness contract (laws, lifecycle, finding schema, binary surface, state file). `spec/basis.md` is the CTT formal foundation. Read these before changing law semantics.
+**`spec/`** — normative contracts. `spec/veneer.md` is the harness contract (laws, lifecycle, finding schema, binary surface, state file). `spec/basis.md` is the CTT formal foundation. `spec/oxidation.md` is the lift/soundness spec for the Rust shadow check. Read these before changing law semantics.
 
 **`verifier/`** — the Rust binary (`veneer`). One crate, eleven modules:
 - `kernel` — the CTT `Expr` ADT, gas-bounded `eval`, and `check_eq` (judgemental equality). Used only for lifting FNV hashes into canonical forms to verify idempotency. No law logic lives here.
@@ -39,6 +39,8 @@ The repository has three layers:
 
 **`skill/veneer/SKILL.md`** — the agent-facing skill. `main.rs` embeds it with `include_str!` so it is always in sync with the binary. `veneer init` writes it to `.claude/skills/veneer/` and `.agents/skills/veneer/`.
 
+**`examples/`** — docs-first walkthroughs (prose, `loc_exclude`d) showing how to use veneer's language-agnostic laws and lifecycle to build TypeScript and Python AI agents. The same tool-using Claude agent is built in both languages so the law → idiom mapping is directly comparable.
+
 ## Key design invariants
 
 - **Errors are data**: everything fails as a `Finding`, never a panic or naked exception.
@@ -52,4 +54,4 @@ The repository has three layers:
 
 ## Self-check
 
-`cargo make self-check` runs the built binary against this repo. Laws declared in `.veneer/config.toml`: `loc_soft=500`, `loc_hard=1000`, `loc_exclude=["docs/", "spec/"]`. No sealed modules are declared for this repo.
+`cargo make self-check` runs the built binary against `verifier skill spec README.md` (see the `self-check` task in `Makefile.toml`) — not a full-tree walk. Laws come from the committed `.veneer/config.toml`: `loc_soft=500`, `loc_hard=1000`, `loc_exclude=["docs/", "spec/", "examples/"]`. No sealed modules are declared for this repo. `.veneer/config.toml` is tracked in git (only `state.toon`, `graph.toon`, and `oxidize/` are gitignored as generated artifacts), so these values are the same for every clone and CI, not a local default.

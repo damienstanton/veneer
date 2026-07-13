@@ -1,0 +1,11 @@
+# veneer configuration — see spec/veneer.md
+loc_soft = 500
+loc_hard = 1000
+
+# Prose, not first-principles code modules: exempt from the LoC budget.
+loc_exclude = ["docs/", "spec/", "examples/"]
+
+# Declare sealed modules:
+# [[modules]]
+# path = "src/core"
+# public = ["api.rs"]

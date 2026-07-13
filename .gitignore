@@ -1,5 +1,8 @@
 target/
-.veneer/
+.veneer/state.toon
+.veneer/state.json
+.veneer/graph.toon
+.veneer/oxidize/
 .DS_Store
 docs/superpowers/
 plan.md
