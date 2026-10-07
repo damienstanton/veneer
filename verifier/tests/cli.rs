@@ -416,3 +416,36 @@ fn mcp_server_version_matches_the_crate_version() {
     );
 }
 
+#[test]
+fn mcp_session_handles_repeated_calls_cleanly() {
+    use std::io::{BufRead, BufReader, Write};
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_veneer"))
+        .current_dir(dir.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
+
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(line.contains(r#""id":1"#), "expected initialize response: {line}");
+
+    for i in 2..=25 {
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":{i},"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"get"}}}}}}"#).unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert!(line.contains(&format!(r#""id":{i}"#)), "expected response for request {i}: {line}");
+    }
+    drop(stdin);
+    let status = child.wait().unwrap();
+    assert!(status.success());
+}
+
