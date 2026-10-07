@@ -416,6 +416,21 @@ fn mcp_server_version_matches_the_crate_version() {
     );
 }
 
+fn child_rss_kb(pid: u32) -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    if let Ok(s) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+        for l in s.lines() {
+            if let Some(r) = l.strip_prefix("VmRSS:") {
+                if let Ok(v) = r.trim().trim_end_matches("kB").trim().parse::<usize>() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    let out = Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse::<usize>().ok()
+}
+
 #[test]
 fn mcp_session_handles_repeated_calls_cleanly() {
     use std::io::{BufRead, BufReader, Write};
@@ -427,25 +442,45 @@ fn mcp_session_handles_repeated_calls_cleanly() {
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
+    let pid = child.id();
     let mut stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
-    let mut reader = BufReader::new(stdout);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
 
     writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"t","version":"0"}}}}}}"#).unwrap();
     writeln!(stdin, r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#).unwrap();
 
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
-    assert!(line.contains(r#""id":1"#), "expected initialize response: {line}");
+    let init_resp: serde_json::Value = serde_json::from_str(&line).expect("valid init response");
+    assert_eq!(init_resp["id"], 1);
+    assert!(init_resp.get("error").is_none());
 
-    for i in 2..=25 {
-        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":{i},"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"get"}}}}}}"#).unwrap();
+    let mut execute_call = |id: u64| {
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"veneer_state","arguments":{{"action":"get"}}}}}}"#).unwrap();
         line.clear();
         reader.read_line(&mut line).unwrap();
-        assert!(line.contains(&format!(r#""id":{i}"#)), "expected response for request {i}: {line}");
+        let resp: serde_json::Value = serde_json::from_str(&line).unwrap_or_else(|e| panic!("invalid json: {line} ({e})"));
+        assert_eq!(resp["id"], id, "response id must match request id exactly");
+        assert!(resp.get("error").is_none(), "unexpected error on request {id}: {line}");
+        let text = resp["result"]["content"][0]["text"].as_str().expect("text content block");
+        assert!(text.contains(r#""phase":"plan""#) && text.contains(r#""refs":{}"#), "unexpected payload: {text}");
+        assert!(!text.contains("protocol"), "unexpected protocol finding: {text}");
+    };
+
+    // Warm up the session so buffers, serializers, and runtime stabilize:
+    for i in 2..=51 { execute_call(i); }
+    let baseline_rss = child_rss_kb(pid);
+
+    // Execute 150 more calls across the active session:
+    for i in 52..=201 { execute_call(i); }
+
+    // Assert memory retention while the session remains active:
+    if let (Some(base), Some(active)) = (baseline_rss, child_rss_kb(pid)) {
+        let growth_kb = active.saturating_sub(base);
+        // rmcp 2.2 retains response-send tasks indefinitely; rmcp 3.5 reaps them (< 256 kB).
+        assert!(growth_kb < 256, "retained tasks leaked memory: +{growth_kb} kB (from {base} to {active} kB)");
     }
     drop(stdin);
-    let status = child.wait().unwrap();
-    assert!(status.success());
+    assert!(child.wait().unwrap().success());
 }
 
