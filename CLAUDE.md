@@ -64,4 +64,4 @@ Versioning is semver, driven by Conventional Commits on `main` (use `feat:`, `fi
 
 The version lives in `verifier/Cargo.toml`, `verifier/Cargo.lock` and `verifier/src/mcp.rs` (the `x-release-please-version` line); release-please edits all three, so never bump by hand. Add a `RELEASE_PLEASE_TOKEN` secret (PAT or app token) so CI runs on the release PR; without it the workflow falls back to `GITHUB_TOKEN`, whose PRs don't trigger CI.
 
-`release-as: 1.0.0` in `release-please-config.json` is a one-time bootstrap for the first release. Delete it in the PR right after v1.0.0 is published, or every later release PR will keep proposing 1.0.0.
+`release-as: 1.0.0` in `release-please-config.json`, with the manifest at `0.0.0`, is a one-time bootstrap for the first release. In the PR right after v1.0.0 is published, delete `release-as` and set the manifest to `1.0.0`, or every later release PR will keep proposing 1.0.0.
