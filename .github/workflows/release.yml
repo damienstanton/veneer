@@ -1,0 +1,32 @@
+name: Release
+
+# Runs after CI finishes on main. If CI is green, release-please either opens
+# or updates the release PR (version bump + changelog from conventional
+# commits), or, once that PR is merged, tags vX.Y.Z and publishes the release.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # A PAT or app token makes CI run on the release PR; the default
+          # GITHUB_TOKEN cannot trigger workflows. Falls back so it still works.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

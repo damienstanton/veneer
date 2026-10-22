@@ -57,3 +57,9 @@ The repository has four layers:
 ## Self-check
 
 `cargo make self-check` runs the built binary against `verifier skill spec README.md` (see the `self-check` task in `Makefile.toml`) — not a full-tree walk. Laws come from the committed `.veneer/config.toml`: `loc_soft=500`, `loc_hard=1000`, `loc_exclude=["docs/", "spec/", "examples/"]`. No sealed modules are declared for this repo. `.veneer/config.toml` is tracked in git (only `state.toon`, `graph.toon`, `usage.jsonl`, and `oxidize/` are gitignored as generated artifacts), so these values are the same for every clone and CI, not a local default.
+
+## Releases
+
+Versioning is semver, driven by Conventional Commits on `main` (use `feat:`, `fix:`, `perf:`, `feat!:` / `BREAKING CHANGE:` in the PR title, since PRs are squash-merged). After CI passes on a push to `main`, `.github/workflows/release.yml` runs release-please, which keeps one open release PR holding the next version and the `CHANGELOG.md` entry. Merging that PR tags `vX.Y.Z` and publishes the GitHub release. `feat` bumps minor, `fix`/`perf` bump patch, a breaking change bumps major; `docs`/`chore`/`test`/`ci` alone don't cut a release.
+
+The version lives in `verifier/Cargo.toml`, `verifier/Cargo.lock` and `verifier/src/mcp.rs` (the `x-release-please-version` line); release-please edits all three, so never bump by hand. Add a `RELEASE_PLEASE_TOKEN` secret (PAT or app token) so CI runs on the release PR; without it the workflow falls back to `GITHUB_TOKEN`, whose PRs don't trigger CI.
