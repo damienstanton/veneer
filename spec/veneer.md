@@ -211,7 +211,9 @@ files; directories are walked) and prints
 Code transcript directory of the nearest of the root and its ancestors that has
 one (`$CLAUDE_CONFIG_DIR`, default `~/.claude`, `/projects/<slug>`, where the
 slug is the absolute path with every non-alphanumeric character replaced by
-`-`); `--latest` keeps only the most recently modified transcript. Per session:
+`-`); `--latest` keeps only the most recently modified transcript — with
+default discovery, only among top-level session transcripts, since a subagent
+(in a per-session subdirectory) can write after its parent. Per session:
 `turns`, `input`, `cache_write`, `cache_read`, `output`, `mean_context`,
 `peak_context`, `last_context`, `over_budget_turns`, and
 `cache_read_over_budget` — the sum of each turn's cache read beyond the budget,
@@ -232,13 +234,14 @@ it judges the agent's window, not the tree.
 is over budget, prints `{"hookSpecificOutput": {hookEventName,
 additionalContext}}` telling the agent to compact or hand off at the next phase
 boundary. Under budget, or on any missing or unreadable input, it prints
-nothing. It always exits 0: a hook must never stand between the user and their
+nothing; a malformed config falls back to the default budget. It always exits 0: a hook must never stand between the user and their
 prompt. Install it as a `UserPromptSubmit` hook:
 
     {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "veneer usage --hook"}]}]}}
 
 **Cycles.** A real transition into `ship` (not the idempotent `ship → ship`)
-appends one JSON line to `.veneer/usage.jsonl` (gitignored, walker-skipped):
+— by `state set`, MCP `veneer_state`, or the `conclude` intent — appends one
+JSON line to `.veneer/usage.jsonl` (gitignored, walker-skipped):
 `{cycle, transcript, turns, cache_read, end_context, session_turns,
 session_cache_read, refs}`, from the most recently modified top-level
 transcript. `turns`/`cache_read` are the cycle's own cost — the session totals

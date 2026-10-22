@@ -227,6 +227,21 @@ pub fn transcripts(paths: &[PathBuf]) -> Vec<PathBuf> {
     out.into_iter().collect()
 }
 
+/// The session transcripts directly in an agent's project directory, sorted.
+/// Claude Code keeps subagent transcripts in per-session subdirectories, so
+/// the top level holds only sessions — the candidates for "the session I am
+/// in".
+pub fn top_level(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+    out.sort();
+    out
+}
+
 /// The most recently modified transcript — "the session I am in", for a
 /// caller that cannot name its own transcript.
 pub fn latest(files: &[PathBuf]) -> Option<PathBuf> {

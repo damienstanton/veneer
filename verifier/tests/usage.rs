@@ -154,3 +154,46 @@ fn shipping_without_a_transcript_still_ships() {
     }
     assert_eq!(fx.json(&["usage", "--cycles"]), serde_json::json!([]));
 }
+
+#[test]
+fn latest_is_the_newest_session_not_a_newer_subagent() {
+    let fx = Fixture::new();
+    fx.write_session("main.jsonl", &[turn("1", 100)]);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let sub = fx.transcript_dir().join("main/subagents");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("agent-1.jsonl"), turn("9", 5) + "\n").unwrap();
+    let r = fx.json(&["usage", "--latest", "--compact"]);
+    assert_eq!(r["total"]["sessions"], 1);
+    assert!(r["sessions"][0]["path"].as_str().unwrap().ends_with("main.jsonl"));
+    // Without --latest the subagent's own window is still reported.
+    assert_eq!(fx.json(&["usage", "--compact"])["total"]["sessions"], 2);
+}
+
+#[test]
+fn hook_stays_silent_on_a_malformed_config() {
+    let fx = Fixture::new();
+    std::fs::create_dir_all(fx.root().join(".veneer")).unwrap();
+    std::fs::write(fx.root().join(".veneer/config.toml"), "not = [valid").unwrap();
+    let p = fx.write_session("a.jsonl", &[turn("1", 10)]);
+    let out = fx.veneer(&["usage", "--hook"], &format!(r#"{{"transcript_path":"{}"}}"#, p.display()));
+    assert_eq!((out.status.code(), out.stdout.is_empty()), (Some(0), true));
+    // The ordinary report still surfaces the malformed config.
+    let out = fx.veneer(&["usage", "--compact"], "");
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn concluding_by_intent_records_the_cycle() {
+    let fx = Fixture::new();
+    std::fs::write(fx.root().join("a.rs"), "fn main() {}\n").unwrap();
+    fx.write_session("s.jsonl", &[turn("1", 100)]);
+    std::fs::write(fx.root().join("conclude.json"), r#"{"intent":"conclude","summary":"done"}"#).unwrap();
+    for step in [&["state", "set", "implement"][..], &["state", "set", "verify"], &["check"]] {
+        assert_eq!(fx.veneer(step, "").status.code(), Some(0));
+    }
+    let out = fx.veneer(&["check", "--intent", "conclude.json"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let cycles = fx.json(&["usage", "--cycles"]);
+    assert_eq!(cycles.as_array().unwrap().len(), 1);
+}

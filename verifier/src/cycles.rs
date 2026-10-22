@@ -66,13 +66,7 @@ pub fn next_record(prev: &[CycleRecord], s: &SessionUsage, refs: &BTreeMap<Strin
 /// in the agent's project directory (subagent transcripts live in
 /// subdirectories and are not the shipping session).
 fn current_transcript(root: &Path) -> Option<PathBuf> {
-    let files: Vec<PathBuf> = std::fs::read_dir(claude_code_dir(root)?)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
-        .collect();
-    crate::usage::latest(&files)
+    crate::usage::latest(&crate::usage::top_level(&claude_code_dir(root)?))
 }
 
 /// Append the cycle that just shipped. Best-effort: returns the record on

@@ -305,14 +305,11 @@ fn cmd_graph(root: &Path, args: &[String]) -> i32 {
 }
 
 fn cmd_usage(root: &Path, args: &[String]) -> i32 {
-    let cfg = match load_config(root) {
-        Ok(c) => c,
-        Err(f) => return emit_compact(&[f]),
-    };
-    let budget = cfg.usage.budget_tokens;
     if args == ["--hook"] {
         // Hook mode: stdin is the agent's hook JSON. Always exit 0 — a
-        // hook must degrade to silence, never block the user's prompt.
+        // hook must degrade to silence, never block the user's prompt, so
+        // even a malformed config falls back to the default budget.
+        let budget = load_config(root).map(|c| c.usage).unwrap_or_default().budget_tokens;
         use std::io::Read;
         let mut stdin = String::new();
         let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -325,6 +322,10 @@ fn cmd_usage(root: &Path, args: &[String]) -> i32 {
         println!("{}", serde_json::to_string(&veneer::cycles::load(root)).unwrap());
         return 0;
     }
+    let budget = match load_config(root) {
+        Ok(c) => c.usage.budget_tokens,
+        Err(f) => return emit_compact(&[f]),
+    };
     let (mut compact, mut latest, mut paths) = (false, false, Vec::new());
     for a in args {
         match a.as_str() {
@@ -337,7 +338,8 @@ fn cmd_usage(root: &Path, args: &[String]) -> i32 {
             p => paths.push(PathBuf::from(p)),
         }
     }
-    if paths.is_empty() {
+    let discovered = paths.is_empty();
+    if discovered {
         match veneer::usage::claude_code_dir(root) {
             Some(d) => paths.push(d),
             None => {
@@ -346,7 +348,13 @@ fn cmd_usage(root: &Path, args: &[String]) -> i32 {
             }
         }
     }
-    let mut files = veneer::usage::transcripts(&paths);
+    // "The latest session" means a session, not a subagent that wrote after
+    // its parent: discovery with --latest looks only at the top level.
+    let mut files = if latest && discovered {
+        veneer::usage::top_level(&paths[0])
+    } else {
+        veneer::usage::transcripts(&paths)
+    };
     if latest {
         files = veneer::usage::latest(&files).into_iter().collect();
     }
