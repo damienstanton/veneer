@@ -29,7 +29,7 @@ one (see State file — the witness covers both the tree and the config).
 JSON array on stdout; human rendering on stderr.
 
     {
-      "law": "module_budget" | "module_sealing" | "idempotency" | "protocol" | "oxidation",
+      "law": "module_budget" | "module_sealing" | "idempotency" | "protocol" | "oxidation" | "context_budget",
       "severity": "error" | "warning",
       "location": { "path": string, "line"?: number },
       "message": string,            // deterministic for identical input
@@ -46,7 +46,8 @@ omitted; per-law fix guidance lives in the skill.
     veneer oxidize [--compact] [--file <shadow.rs>]   # transient Rust type-check
     veneer graph build [--compact] | query [--compact] <path>
     veneer state get [--json]|reset|set <phase> [--ref k=v ...]
-    veneer mcp                              # veneer_check / veneer_state / veneer_oxidize / veneer_graph over stdio
+    veneer usage [--compact] [--latest] [transcripts...] | --cycles | --hook
+    veneer mcp                              # veneer_check / veneer_state / veneer_oxidize / veneer_graph / veneer_usage over stdio
 
 `--link <skill-src-dir>` creates a symlink from `.claude/skills/veneer` (and
 `.agents/skills/veneer`) to the given source directory; without `--link` the
@@ -195,3 +196,54 @@ remains for a forced/manual rebuild.
 a read against the cache only, no re-walk or re-extraction. `--compact`/MCP
 strip `suggested_fix` from any nested `semantic_findings`, same as a top-level
 findings array.
+
+## Usage and cycles
+
+Agent cost is dominated by cache reads: every turn re-reads the whole context,
+so a session costs roughly its context size times its turns. `veneer usage`
+measures this from the agent's own transcript; it is orthogonal to the laws and
+the gate, exactly like the graph — `check` never reads it and it never refuses
+a transition.
+
+**Report.** `veneer usage [paths...]` summarizes each transcript (`.jsonl`
+files; directories are walked) and prints
+`{budget_tokens, sessions, total, findings}`. With no paths it reads the Claude
+Code transcript directory of the nearest of the root and its ancestors that has
+one (`$CLAUDE_CONFIG_DIR`, default `~/.claude`, `/projects/<slug>`, where the
+slug is the absolute path with every non-alphanumeric character replaced by
+`-`); `--latest` keeps only the most recently modified transcript. Per session:
+`turns`, `input`, `cache_write`, `cache_read`, `output`, `mean_context`,
+`peak_context`, `last_context`, `over_budget_turns`, and
+`cache_read_over_budget` — the sum of each turn's cache read beyond the budget,
+a lower bound on what compacting at the budget would have saved and the number
+to drive toward zero. A turn's context is fresh input + cache writes + cache
+reads. Claude Code repeats a response's usage on one line per content block,
+so responses are deduplicated by message id (falling back to request id).
+Context statistics describe the main chain; a transcript holding only sidechain
+turns is a subagent's own window (`kind: "subagent"`). Malformed lines are
+skipped; an unreadable file is a Protocol finding inside the report.
+
+**Budget.** `[usage] budget_tokens` (default 150000). A session whose context
+ever passed it yields one `context_budget` **warning** — never an error, since
+it judges the agent's window, not the tree.
+
+**Hook.** `veneer usage --hook` reads a Claude Code hook's stdin JSON
+(`transcript_path`, `hook_event_name`) and, when the session's current context
+is over budget, prints `{"hookSpecificOutput": {hookEventName,
+additionalContext}}` telling the agent to compact or hand off at the next phase
+boundary. Under budget, or on any missing or unreadable input, it prints
+nothing. It always exits 0: a hook must never stand between the user and their
+prompt. Install it as a `UserPromptSubmit` hook:
+
+    {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "veneer usage --hook"}]}]}}
+
+**Cycles.** A real transition into `ship` (not the idempotent `ship → ship`)
+appends one JSON line to `.veneer/usage.jsonl` (gitignored, walker-skipped):
+`{cycle, transcript, turns, cache_read, end_context, session_turns,
+session_cache_read, refs}`, from the most recently modified top-level
+transcript. `turns`/`cache_read` are the cycle's own cost — the session totals
+minus those at the previous record from the same transcript, or the whole
+session when the transcript is new — so a cycle started in a fresh session
+reads as cheap. Recording is best-effort and every failure is swallowed;
+`veneer usage --cycles` (MCP: `veneer_usage` with `action: "cycles"`) prints
+the ledger, skipping malformed lines.

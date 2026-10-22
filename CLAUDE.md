@@ -23,7 +23,7 @@ The repository has four layers:
 
 **`spec/`** — normative contracts. `spec/veneer.md` is the harness contract (laws, lifecycle, finding schema, binary surface, state file). `spec/basis.md` is the CTT formal foundation. `spec/oxidation.md` is the lift/soundness spec for the Rust shadow check. Read these before changing law semantics.
 
-**`verifier/`** — the Rust binary (`veneer`). One crate, eleven modules:
+**`verifier/`** — the Rust binary (`veneer`). One crate, thirteen modules:
 - `kernel` — the CTT `Expr` ADT, gas-bounded `eval`, and `check_eq` (judgemental equality). Used only for lifting FNV hashes into canonical forms to verify idempotency. No law logic lives here.
 - `laws` — the three laws as deterministic checks, plus the `Finding` value type, `Config` (from `.veneer/config.toml`), file walker, and `run_checks` orchestrator. The authoritative output surface: every veneer result is a `Finding`.
 - `patch` — unified-diff parse/apply over an in-memory tree; pure value
@@ -34,7 +34,9 @@ The repository has four layers:
 - `graph_lift` — crate-private: the generic-erasure engine that turns extracted `pub fn` signatures into a self-contained, type-erased Rust program preserving their ownership/borrowing shape. Re-exported as `graph::lift_shadow`; no dependency on `graph`'s persistence or extraction concerns.
 - `wire` — crate-private ASCII armor for the TOON wire format, shared by `graph` and `state`: free text is whitelist-encoded (ASCII letters/digits/space/underscore pass through; empty maps to a bare `%` sentinel; leading digit-like bytes and everything else percent-escape) because toon-rust 0.1.3 mishandles many scalar shapes.
 - `intent` — the `AgentIntent` ADT (expand_context / propose_diff / conclude / oxidize / query_graph) dispatched by `--intent` and MCP.
-- `mcp` — thin MCP adapter over `laws`, `state`, `oxidize`, and `graph` (`veneer_check`, `veneer_state`, `veneer_oxidize`, `veneer_graph` tools, served over stdio via `rmcp`).
+- `usage` — per-session token accounting from an agent's own transcript (Claude Code JSONL today, behind the `TranscriptFormat` sum type): turns, cache reads, mean/peak/last context, reads past `[usage] budget_tokens`, `context_budget` warnings, and the `veneer usage --hook` response. Orthogonal to the laws and the gate.
+- `cycles` — the per-cycle ledger `.veneer/usage.jsonl`: one line appended, best-effort, on each real transition into Ship, holding that cycle's own cache reads. A sidecar like the graph, never part of the hashed state file.
+- `mcp` — thin MCP adapter over `laws`, `state`, `oxidize`, `graph`, and `usage` (`veneer_check`, `veneer_state`, `veneer_oxidize`, `veneer_graph`, `veneer_usage` tools, served over stdio via `rmcp`).
 - `main` — CLI dispatch only; no logic.
 
 **`skill/veneer/SKILL.md`** — the agent-facing skill. `main.rs` embeds it with `include_str!` so it is always in sync with the binary. `veneer init` writes it to `.claude/skills/veneer/` and `.agents/skills/veneer/`.
@@ -54,4 +56,4 @@ The repository has four layers:
 
 ## Self-check
 
-`cargo make self-check` runs the built binary against `verifier skill spec README.md` (see the `self-check` task in `Makefile.toml`) — not a full-tree walk. Laws come from the committed `.veneer/config.toml`: `loc_soft=500`, `loc_hard=1000`, `loc_exclude=["docs/", "spec/", "examples/"]`. No sealed modules are declared for this repo. `.veneer/config.toml` is tracked in git (only `state.toon`, `graph.toon`, and `oxidize/` are gitignored as generated artifacts), so these values are the same for every clone and CI, not a local default.
+`cargo make self-check` runs the built binary against `verifier skill spec README.md` (see the `self-check` task in `Makefile.toml`) — not a full-tree walk. Laws come from the committed `.veneer/config.toml`: `loc_soft=500`, `loc_hard=1000`, `loc_exclude=["docs/", "spec/", "examples/"]`. No sealed modules are declared for this repo. `.veneer/config.toml` is tracked in git (only `state.toon`, `graph.toon`, `usage.jsonl`, and `oxidize/` are gitignored as generated artifacts), so these values are the same for every clone and CI, not a local default.

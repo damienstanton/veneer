@@ -12,6 +12,9 @@ pub enum Law {
     Idempotency,
     Protocol,
     Oxidation,
+    /// An agent session's context passed `[usage] budget_tokens`. Always a
+    /// warning, never from `check`: it judges the agent's window, not the tree.
+    ContextBudget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +91,8 @@ pub struct Config {
     pub loc_exclude: Vec<String>,
     #[serde(default)]
     pub oxidize: crate::oxidize::OxidizeConfig,
+    #[serde(default)]
+    pub usage: crate::usage::UsageConfig,
 }
 
 fn default_soft() -> u32 { 500 }
@@ -98,6 +103,7 @@ impl Default for Config {
         Config {
             loc_soft: 500, loc_hard: 1000, modules: Vec::new(), loc_exclude: Vec::new(),
             oxidize: crate::oxidize::OxidizeConfig::default(),
+            usage: crate::usage::UsageConfig::default(),
         }
     }
 }

@@ -6,3 +6,4 @@ target/
 .DS_Store
 docs/superpowers/
 plan.md
+.veneer/usage.jsonl
