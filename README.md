@@ -23,6 +23,19 @@ One small Rust binary judges the work, and one skill file teaches the agent the 
 
 Then invoke the `veneer` skill, or serve the same tools over MCP with `veneer mcp`. To upgrade, re-run `veneer init`. An older `.veneer/` directory migrates on its own.
 
+## What it saves
+
+Here is one real workload: a developer's Claude Code logs covering 9,622 turns. They re-read **3.53B cache tokens**, an average context of 367K per turn, because two long-running sessions kept their context growing.
+
+If the agent compacts or starts a fresh session whenever it passes the 150K budget, no turn re-reads more than 150K. That caps the same turns at 1.44B, so it saves **at least 2.09B tokens (59%)**. This is a floor: real compaction drops well below the budget, so the actual saving is larger.
+
+| Cache-read price | Before | Saved, at least | Per turn, before → after |
+|---|---|---|---|
+| $0.50/MTok (Opus 5, Opus 4.x) | $1,765 | $1,043 | $0.18 → ≤ $0.075 |
+| $0.20/MTok (Opus 5.5, Sonnet 5.5) | $706 | $417 | $0.07 → ≤ $0.03 |
+
+These figures are API-equivalent; on a subscription plan the saving shows up as headroom against usage limits. Each fresh session re-caches the fixed context once, about 75K tokens of cache writes, which is small next to what it saves. `veneer usage` reports your own version of these numbers. Its `cache_read_over_budget` field is exactly this floor, per session.
+
 ## Measure your agent
 
     veneer usage --latest     # this session: turns, cache reads, mean/peak context
