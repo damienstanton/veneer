@@ -6,5 +6,7 @@ pub mod state;
 pub mod intent;
 pub mod mcp;
 pub mod graph;
+pub mod usage;
+pub mod cycles;
 mod graph_lift;
 mod wire;

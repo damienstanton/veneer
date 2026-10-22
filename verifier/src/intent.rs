@@ -74,10 +74,16 @@ pub fn execute(root: &Path, intent: AgentIntent, cfg: &Config) -> Outcome {
         AgentIntent::ProposeDiff { patch } => {
             Outcome::Findings(run_checks(root, &[], Some(&patch), cfg))
         }
-        AgentIntent::Conclude { summary } => match set_phase(root, Phase::Ship, &[]) {
-            Ok(_) => Outcome::Concluded(summary),
-            Err(f) => Outcome::Findings(vec![f]),
-        },
+        AgentIntent::Conclude { summary } => {
+            let before = crate::state::load(root).map(|s| s.phase).unwrap_or_default();
+            match set_phase(root, Phase::Ship, &[]) {
+                Ok(s) => {
+                    crate::cycles::on_transition(root, before, &s);
+                    Outcome::Concluded(summary)
+                }
+                Err(f) => Outcome::Findings(vec![f]),
+            }
+        }
         AgentIntent::Oxidize { shadow } => {
             Outcome::Findings(crate::oxidize::oxidize(root, &shadow, &cfg.oxidize))
         }

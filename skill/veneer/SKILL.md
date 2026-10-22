@@ -60,7 +60,7 @@ discipline is identical in every language; only who checks it changes.
 
 **Finding schema** (what `veneer check --compact` emits, one JSON array on
 stdout): `law` (module_budget | module_sealing | idempotency | protocol |
-oxidation), `severity` (error | warning), `location` {path, line?}, `message`.
+oxidation | context_budget), `severity` (error | warning), `location` {path, line?}, `message`.
 (Without `--compact`, findings also carry `suggested_fix` and render on stderr.)
 
 **module_budget** — a module (file) exceeds the LoC band. Warning >500 is
@@ -122,6 +122,22 @@ can see its ownership story without re-oxidizing. Open full source only when the
 entry is `stale`, missing, or the task genuinely needs an implementation rather
 than a signature. Loading whole files to learn what a one-line signature would
 have told you is the most common avoidable token cost in the loop.
+
+## Context discipline
+
+Every turn re-reads the whole context, so context size × turns is the cost
+(cache reads). A cycle is the natural session boundary: the state file, not
+the conversation, carries the work across it.
+
+- **One cycle, one session.** After `ship`, start the next cycle in a fresh
+  session (or compact); `veneer state get` resumes exactly where you were.
+- **context_budget** — a session passed `[usage] budget_tokens` (warning,
+  never a gate; also injected by the `veneer usage --hook` hook). Compact,
+  or finish the cycle and hand off to a fresh session.
+- Push broad exploration into subagents; their context is discarded.
+- Read bounded slices and the graph, never whole files or unbounded output.
+- `veneer usage --latest` measures the current session; `veneer usage
+  --cycles` shows what each shipped cycle cost (recorded at `set ship`).
 
 ## Phase: plan
 

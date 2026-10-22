@@ -14,6 +14,7 @@ USAGE:
   veneer oxidize [--compact] [--file <shadow.rs>]   # type-check a Rust shadow (reads stdin if no --file)
   veneer graph build [--compact] | query [--compact] <path>
   veneer state get [--json] | set <phase> [--ref k=v ...] | reset
+  veneer usage [--compact] [--latest] [transcripts...] | --cycles | --hook
   veneer mcp
 ";
 
@@ -34,6 +35,10 @@ loc_hard = 1000
 # [[modules]]
 # path = \"src/core\"
 # public = [\"api.rs\"]
+
+# Agent context budget for `veneer usage` (tokens; a warning, never a gate):
+# [usage]
+# budget_tokens = 150000
 ";
 
 fn emit(findings: &[Finding]) -> i32 {
@@ -299,6 +304,73 @@ fn cmd_graph(root: &Path, args: &[String]) -> i32 {
     }
 }
 
+fn cmd_usage(root: &Path, args: &[String]) -> i32 {
+    if args == ["--hook"] {
+        // Hook mode: stdin is the agent's hook JSON. Always exit 0 — a
+        // hook must degrade to silence, never block the user's prompt, so
+        // even a malformed config falls back to the default budget.
+        let budget = load_config(root).map(|c| c.usage).unwrap_or_default().budget_tokens;
+        use std::io::Read;
+        let mut stdin = String::new();
+        let _ = std::io::stdin().read_to_string(&mut stdin);
+        if let Some(out) = veneer::usage::hook_response(&stdin, budget) {
+            println!("{out}");
+        }
+        return 0;
+    }
+    if args == ["--cycles"] {
+        println!("{}", serde_json::to_string(&veneer::cycles::load(root)).unwrap());
+        return 0;
+    }
+    let budget = match load_config(root) {
+        Ok(c) => c.usage.budget_tokens,
+        Err(f) => return emit_compact(&[f]),
+    };
+    let (mut compact, mut latest, mut paths) = (false, false, Vec::new());
+    for a in args {
+        match a.as_str() {
+            "--compact" => compact = true,
+            "--latest" => latest = true,
+            p if p.starts_with("--") => {
+                eprintln!("{USAGE}");
+                return 2;
+            }
+            p => paths.push(PathBuf::from(p)),
+        }
+    }
+    let discovered = paths.is_empty();
+    if discovered {
+        match veneer::usage::claude_code_dir(root) {
+            Some(d) => paths.push(d),
+            None => {
+                eprintln!("error: no transcripts given and HOME is unset");
+                return 2;
+            }
+        }
+    }
+    // "The latest session" means a session, not a subagent that wrote after
+    // its parent: discovery with --latest looks only at the top level.
+    let mut files = if latest && discovered {
+        veneer::usage::top_level(&paths[0])
+    } else {
+        veneer::usage::transcripts(&paths)
+    };
+    if latest {
+        files = veneer::usage::latest(&files).into_iter().collect();
+    }
+    let r = veneer::usage::report(&files, budget);
+    println!("{}", veneer::usage::report_json(&r, compact));
+    if !compact {
+        for s in &r.sessions {
+            eprintln!(
+                "{}: {} turns, {} cache-read, mean context {}, peak {}",
+                s.path, s.turns, s.cache_read, s.mean_context, s.peak_context
+            );
+        }
+    }
+    if r.findings.iter().any(|f| f.severity == Severity::Error) { 1 } else { 0 }
+}
+
 fn cmd_intent(root: &Path, contents: &str, cfg: &veneer::laws::Config) -> i32 {
     match parse_intent(contents) {
         Err(f) => emit(&[f]),
@@ -380,8 +452,10 @@ fn cmd_state(root: &Path, args: &[String]) -> i32 {
                     return 2;
                 }
             }
+            let before = load(root).map(|s| s.phase).unwrap_or_default();
             match set_phase(root, phase, &refs) {
                 Ok(s) => {
+                    veneer::cycles::on_transition(root, before, &s);
                     println!("{}", veneer::state::public_json(&s));
                     0
                 }
@@ -416,6 +490,7 @@ fn main() {
         Some("oxidize") => cmd_oxidize(&root, &args[1..]),
         Some("graph") => cmd_graph(&root, &args[1..]),
         Some("state") => cmd_state(&root, &args[1..]),
+        Some("usage") => cmd_usage(&root, &args[1..]),
         Some("mcp") => veneer::mcp::serve(root.clone()),
         _ => {
             eprintln!("{USAGE}");

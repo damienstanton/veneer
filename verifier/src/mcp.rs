@@ -45,6 +45,17 @@ pub struct StateArgs {
     pub refs: std::collections::BTreeMap<String, String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct UsageArgs {
+    /// "report" (default): per-session cache-read report. "cycles": the
+    /// per-cycle ledger recorded at each ship.
+    pub action: Option<String>,
+    /// Transcript files or directories (default: this project's Claude Code
+    /// transcript directory).
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct VeneerServer {
     root: PathBuf,
@@ -139,6 +150,26 @@ impl VeneerServer {
         CallToolResult::success(vec![ContentBlock::text(body)])
     }
 
+    #[tool(description = "Report agent context usage, the lever behind cache-read cost: per transcript, turns, cache reads, mean/peak/last context, and cache reads past the configured `[usage] budget_tokens`. action=\"cycles\" returns the per-cycle ledger recorded at each ship. Over-budget sessions come back as context_budget warnings.")]
+    fn veneer_usage(&self, args: Parameters<UsageArgs>) -> CallToolResult {
+        let a = args.0;
+        let cfg = match load_config(&self.root) {
+            Ok(c) => c,
+            Err(f) => return CallToolResult::success(vec![ContentBlock::text(findings_json_compact(&[f]))]),
+        };
+        let body = if a.action.as_deref() == Some("cycles") {
+            serde_json::to_string(&crate::cycles::load(&self.root)).expect("ledger serialization is infallible")
+        } else {
+            let mut paths: Vec<PathBuf> = a.paths.iter().map(PathBuf::from).collect();
+            if paths.is_empty() {
+                paths.extend(crate::usage::claude_code_dir(&self.root));
+            }
+            let files = crate::usage::transcripts(&paths);
+            crate::usage::report_json(&crate::usage::report(&files, cfg.usage.budget_tokens), true)
+        };
+        CallToolResult::success(vec![ContentBlock::text(body)])
+    }
+
     #[tool(description = "Read or transition the veneer lifecycle state (plan → implement → verify → ship). Invalid transitions and a stale ship gate return protocol findings.")]
     fn veneer_state(&self, args: Parameters<StateArgs>) -> CallToolResult {
         let a = args.0;
@@ -154,6 +185,7 @@ impl VeneerServer {
                 Err(f) => findings_json_compact(&[f]),
             },
             "set" => {
+                let before = load(&self.root).map(|s| s.phase).unwrap_or_default();
                 let refs: Vec<(String, String)> = a.refs.into_iter().collect();
                 match a.phase.as_deref().and_then(Phase::parse) {
                     None => findings_json_compact(&[Finding::error(
@@ -164,7 +196,10 @@ impl VeneerServer {
                         None,
                     )]),
                     Some(p) => match set_phase(&self.root, p, &refs) {
-                        Ok(s) => crate::state::public_json(&s),
+                        Ok(s) => {
+                            crate::cycles::on_transition(&self.root, before, &s);
+                            crate::state::public_json(&s)
+                        }
                         Err(f) => findings_json_compact(&[f]),
                     },
                 }
@@ -185,7 +220,7 @@ impl VeneerServer {
 #[tool_handler(
     name = "veneer",
     version = "1.0.0",
-    instructions = "veneer verifier: veneer_check for law findings; veneer_state to read/transition the lifecycle; veneer_oxidize to type-check a Rust shadow; veneer_graph to build/query the knowledge graph."
+    instructions = "veneer verifier: veneer_check for law findings; veneer_state to read/transition the lifecycle; veneer_oxidize to type-check a Rust shadow; veneer_graph to build/query the knowledge graph; veneer_usage to measure session context and cache reads."
 )]
 impl ServerHandler for VeneerServer {}
 
