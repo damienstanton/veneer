@@ -216,10 +216,10 @@ impl VeneerServer {
     }
 }
 
-// Keep in lockstep with Cargo.toml; pinned by mcp_server_version_matches_the_crate_version.
+// Bumped by release-please (see release-please-config.json); pinned to Cargo.toml by mcp_server_version_matches_the_crate_version.
 #[tool_handler(
     name = "veneer",
-    version = "1.0.0",
+    version = "1.0.0", // x-release-please-version
     instructions = "veneer verifier: veneer_check for law findings; veneer_state to read/transition the lifecycle; veneer_oxidize to type-check a Rust shadow; veneer_graph to build/query the knowledge graph; veneer_usage to measure session context and cache reads."
 )]
 impl ServerHandler for VeneerServer {}
