@@ -5,6 +5,7 @@
       "release-type": "simple",
       "package-name": "veneer",
       "include-component-in-tag": false,
+      "release-as": "1.0.0",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
@@ -15,7 +16,7 @@
         {
           "type": "toml",
           "path": "verifier/Cargo.lock",
-          "jsonpath": "$.package[?(@.name=='veneer')].version"
+          "jsonpath": "$.package[?(@.name.value=='veneer')].version"
         },
         "verifier/src/mcp.rs"
       ]
