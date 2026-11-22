@@ -107,6 +107,9 @@ pub fn leaf_prompt(spec: &LaunchSpec) -> String {
     p
 }
 
+/// Session-only allow rules so a headless agy leaf can run the leaf protocol.
+const AGY_LEAF_SETTINGS: &str = r#"{"permissions":{"allow":["command(veneer)","command(git)"]}}"#;
+
 pub fn invocation(h: Harness, spec: &LaunchSpec) -> Invocation {
     if h == Harness::AgyRemote {
         return super::remote::invocation(spec);
@@ -131,12 +134,20 @@ pub fn invocation(h: Harness, spec: &LaunchSpec) -> Invocation {
             }
         }
         Harness::Agy => {
-            let mode = match spec.task.permissions {
-                Permissions::Plan => "plan",
-                Permissions::Edit => "accept-edits",
-                Permissions::Auto => "auto",
-            };
-            args.extend(["--mode".into(), mode.into()]);
+            // `--mode auto` is not available on every account, and headless
+            // agy auto-denies any shell command it has no allow rule for, which
+            // silently ends the leaf before it can run `veneer` or `git`. So:
+            // plan stays plan; edit gets accept-edits plus allow rules for the
+            // two commands the leaf protocol needs; auto skips permission
+            // prompts, the analogue of Claude's bypassPermissions.
+            match spec.task.permissions {
+                Permissions::Plan => args.extend(["--mode".into(), "plan".into()]),
+                Permissions::Edit => {
+                    args.extend(["--mode".into(), "accept-edits".into()]);
+                    args.extend(["--settings".into(), AGY_LEAF_SETTINGS.into()]);
+                }
+                Permissions::Auto => args.push("--dangerously-skip-permissions".into()),
+            }
             args.extend([
                 "--print-timeout".into(),
                 format!("{}s", u64::from(spec.task.budget.minutes) * 60),
@@ -343,6 +354,19 @@ mod tests {
         assert!(a.contains("--print-timeout 1200s"));
         assert!(a.contains("--conversation conv-9"));
         assert!(!a.contains("--max-turns"));
+    }
+
+    #[test]
+    fn agy_permissions_leave_headless_leaves_able_to_run_the_protocol() {
+        let mut t = task();
+        t.permissions = Permissions::Edit;
+        let a = invocation(Harness::Agy, &spec(&t, &[], None)).args.join(" ");
+        assert!(a.contains("--mode accept-edits"));
+        assert!(a.contains("command(veneer)") && a.contains("command(git)"));
+        assert!(!a.contains("--dangerously-skip-permissions"));
+        t.permissions = Permissions::Auto;
+        let a = invocation(Harness::Agy, &spec(&t, &[], None)).args.join(" ");
+        assert!(a.contains("--dangerously-skip-permissions") && !a.contains("--mode"));
     }
 
     #[test]
