@@ -15,6 +15,7 @@ pub mod hub;
 pub mod mcp;
 pub mod memory;
 pub mod op;
+pub mod remote;
 pub mod replica;
 pub mod sync;
 pub mod tasks;

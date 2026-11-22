@@ -62,6 +62,9 @@ fn init(rest: &[String]) -> i32 {
     if let Some(h) = flag(rest, "--harness") {
         cfg.harnesses = list(h);
     }
+    if let Some(p) = flag(rest, "--agy-remote") {
+        cfg.agy_remote_project = Some(p.into());
+    }
     if rest.iter().any(|a| a == "--cloud") {
         cfg.local = false;
     }

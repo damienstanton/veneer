@@ -17,6 +17,7 @@ fn sh(dir: &Path, cmd: &str) {
 struct Env {
     tmp: tempfile::TempDir,
     bin: PathBuf,
+    extra: Vec<(String, String)>,
 }
 
 impl Env {
@@ -38,6 +39,7 @@ impl Env {
             .env("GIT_AUTHOR_EMAIL", "t@t")
             .env("GIT_COMMITTER_NAME", "t")
             .env("GIT_COMMITTER_EMAIL", "t@t")
+            .envs(self.extra.iter().cloned())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -94,7 +96,7 @@ fn orchestrator_to_worker_to_done_through_a_git_hub() {
     std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_veneer"), bin.join("veneer")).unwrap();
     std::fs::write(bin.join("claude"), FAKE_CLAUDE).unwrap();
     std::fs::set_permissions(bin.join("claude"), std::fs::Permissions::from_mode(0o755)).unwrap();
-    let env = Env { tmp, bin };
+    let env = Env { tmp, bin, extra: vec![] };
     let hub = t.join("hub.git");
 
     // Orchestrator replica.
@@ -146,7 +148,7 @@ fn leaf_commands_outside_a_task_are_findings_not_crashes() {
     let tmp = tempfile::tempdir().unwrap();
     let t = &tmp.path().to_path_buf();
     sh(t, "git init -q --bare hub.git");
-    let env = Env { bin: t.join("bin"), tmp };
+    let env = Env { bin: t.join("bin"), tmp, extra: vec![] };
     let hub = t.join("hub.git");
     env.veneer("o.toml", t, &["net", "init", "--hub", hub.to_str().unwrap(), "--name", "o"], None);
     let (code, v) = env.veneer("o.toml", t, &["task", "progress", "hello"], None);
@@ -156,4 +158,87 @@ fn leaf_commands_outside_a_task_are_findings_not_crashes() {
     assert_eq!(code, 1, "{v}");
     let (code, _) = env.veneer("missing.toml", t, &["task", "list"], None);
     assert_eq!(code, 1);
+}
+
+/// Stands in for `script ... agy --remote-agent -i <prompt>`: a remote agent on
+/// its own replica and its own clone reports on the dispatcher's run, then the
+/// session idles like an interactive terminal until the worker stops it.
+const FAKE_REMOTE_SESSION: &str = r#"#!/bin/sh
+set -e
+export VENEER_NET_CONFIG="$REMOTE_CFG" VENEER_CLOUD=agy-remote VENEER_SESSION_ID="$VENEER_RUN"
+cd "$REMOTE_CLONE"
+git checkout -qB "veneer/$VENEER_TASK" origin/main
+veneer init > /dev/null
+git add -A && git commit -qm "veneer init"
+echo 'pub fn remote() {}' > remote.rs
+git add remote.rs && git commit -qm "add remote()"
+veneer state set implement > /dev/null
+veneer state set verify > /dev/null
+veneer check --compact > /dev/null
+veneer state set ship > /dev/null
+git push -q -u origin "veneer/$VENEER_TASK"
+veneer task complete --status done --summary "remote() from a remote agent" --check "it compiles=pass" > /dev/null
+exec sleep 600
+"#;
+
+#[test]
+fn a_local_machine_dispatches_an_agy_cloud_task_to_a_remote_agent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t = &tmp.path().to_path_buf();
+    sh(t, "git init -q --bare hub.git && git init -q --bare origin.git");
+    sh(
+        t,
+        "git init -q -b main src && cd src && git config user.email t@t && git config user.name t \
+         && echo 'pub fn a() {}' > lib.rs && git add . && git commit -qm init \
+         && git remote add origin ../origin.git && git push -q origin main",
+    );
+    sh(t, "git clone -q origin.git remote-clone && cd remote-clone && git config user.email t@t && git config user.name t");
+    let bin = t.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_veneer"), bin.join("veneer")).unwrap();
+    std::fs::write(bin.join("script"), FAKE_REMOTE_SESSION).unwrap();
+    std::fs::set_permissions(bin.join("script"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let hub = t.join("hub.git");
+    std::fs::write(
+        t.join("remote.toml"),
+        format!("replica = \"x\"\nhub = \"{}\"\nhub_dir = \"{}\"\nlocal = false\n", hub.display(), t.join("remote-hub").display()),
+    )
+    .unwrap();
+    let env = Env {
+        tmp,
+        bin,
+        extra: vec![
+            ("REMOTE_CFG".into(), t.join("remote.toml").display().to_string()),
+            ("REMOTE_CLONE".into(), t.join("remote-clone").display().to_string()),
+        ],
+    };
+
+    let (code, v) = env.veneer("orch.toml", t, &["net", "init", "--hub", hub.to_str().unwrap(), "--name", "orch"], None);
+    assert_eq!(code, 0, "{v}");
+    let envelope = r#"{"title":"Add remote()","repo":"o/r","prompt":"Add remote().","harness":"agy","where":"cloud","acceptance":["it compiles"],"budget":{"minutes":5}}"#;
+    let (_, v) = env.veneer("orch.toml", t, &["task", "new", "-"], Some(envelope));
+    let id = v["id"].as_str().unwrap().to_string();
+
+    // A Mac with agy and a remote project, and a one-minute lease so it
+    // notices the remote report within a quarter of that.
+    std::fs::write(
+        t.join("mac.toml"),
+        format!(
+            "replica = \"mac\"\nhub = \"{}\"\nhub_dir = \"{}\"\nwork_dir = \"{}\"\nharnesses = [\"agy\"]\nlease_minutes = 1\nagy_remote_project = \"tasknet\"\n",
+            hub.display(),
+            t.join("mac-hub").display(),
+            t.join("mac-work").display()
+        ),
+    )
+    .unwrap();
+    let (code, _) = env.veneer("mac.toml", t, &["net", "worker", "--once"], None);
+    assert_eq!(code, 0);
+
+    let (_, v) = env.veneer("orch.toml", t, &["task", "show", &id], None);
+    assert_eq!(v["status"], "done", "{v}");
+    assert_eq!(v["result"]["branch"], format!("veneer/{id}"));
+    assert_eq!(v["holder"], Value::Null);
+    let (_, v) = env.veneer("orch.toml", t, &["task", "list", "--all"], None);
+    let ignored = &v["tasks"][0]["ignored"];
+    assert!(ignored.as_array().is_none_or(|a| a.is_empty()), "no stray heartbeats: {ignored}");
 }

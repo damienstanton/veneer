@@ -42,7 +42,12 @@ pub fn run(hub: &mut Hub, once: bool) -> Result<(), NetError> {
             .replica
             .claimable(&caps)?
             .into_iter()
-            .find_map(|t| Harness::choose(t.task.harness, &available).map(|h| (t, h)));
+            .find_map(|t| {
+                if super::replica::dispatches_remote_agy(&t.task, &caps) {
+                    return Some((t, Harness::AgyRemote));
+                }
+                Harness::choose(t.task.harness, &available).map(|h| (t, h))
+            });
         if let Some((t, h)) = next {
             match run_task(hub, &t, h) {
                 Ok(status) => eprintln!("veneer net: task {} ended {}", t.id, status.name()),
@@ -63,7 +68,14 @@ fn run_task(hub: &mut Hub, t: &TaskState, h: Harness) -> Result<Status, NetError
     if !hub.replica.still_holds(&t.id, &run)? {
         return Err(NetError::Rejected("lost the claim to an earlier replica".into()));
     }
-    let wt = match prepare_worktree(hub, &t.id, &t.task, &run) {
+    // A remote agent works in its own sandbox; locally it only needs a
+    // directory for the terminal log.
+    let prepared = if h == Harness::AgyRemote {
+        remote_dir(hub, &t.id, &run)
+    } else {
+        prepare_worktree(hub, &t.id, &t.task, &run)
+    };
+    let wt = match prepared {
         Ok(wt) => wt,
         Err(e) => {
             let mut r = TaskResult::new(Outcome::Failed, format!("worker could not prepare the worktree: {e}"));
@@ -74,6 +86,7 @@ fn run_task(hub: &mut Hub, t: &TaskState, h: Harness) -> Result<Status, NetError
     };
     let branch = branch_for(&t.id);
     let extra = hub.cfg.extra_args(h).to_vec();
+    let project = hub.cfg.agy_remote_project.clone();
     let spec = LaunchSpec {
         task: &t.task,
         task_id: &t.id,
@@ -83,6 +96,7 @@ fn run_task(hub: &mut Hub, t: &TaskState, h: Harness) -> Result<Status, NetError
         dialogue: &t.dialogue,
         resume_session: t.resume_session.as_deref(),
         extra_args: &extra,
+        remote_project: project.as_deref(),
     };
     let end = supervise(hub, &t.id, &run, h, &spec, &wt);
     hub.sync();
@@ -100,7 +114,9 @@ fn supervise(hub: &mut Hub, id: &str, run: &str, h: Harness, spec: &LaunchSpec, 
     let inv = harness::invocation(h, spec);
     let log = std::fs::File::create(wt.join(".veneer/leaf.log"));
     let mut cmd = Command::new(&inv.program);
-    cmd.args(&inv.args).envs(inv.env.iter().cloned()).current_dir(wt).stdin(Stdio::null()).stdout(Stdio::piped());
+    cmd.args(&inv.args).envs(inv.env.iter().cloned()).current_dir(wt).stdout(Stdio::piped());
+    // An interactive remote session ends at EOF, so hold its stdin open.
+    cmd.stdin(if h == Harness::AgyRemote { Stdio::piped() } else { Stdio::null() });
     if let Ok(f) = log {
         cmd.stderr(f);
     }
@@ -108,6 +124,7 @@ fn supervise(hub: &mut Hub, id: &str, run: &str, h: Harness, spec: &LaunchSpec, 
         Ok(c) => c,
         Err(e) => return RunEnd::LaunchFailed(format!("{}: {e}", inv.program)),
     };
+    let _hold_stdin = child.stdin.take();
     let reader = child.stdout.take().map(|mut out| {
         std::thread::spawn(move || {
             let mut s = String::new();
@@ -132,11 +149,14 @@ fn supervise(hub: &mut Hub, id: &str, run: &str, h: Harness, spec: &LaunchSpec, 
         }
         if last_beat.elapsed() >= beat_every {
             last_beat = Instant::now();
-            let _ = hub.write(|r| r.heartbeat(id, run));
+            // Pull first: the leaf may have reported (a remote agent reports
+            // from its own replica), and a settled task needs no heartbeat.
+            hub.sync();
             if !hub.replica.still_holds(id, run).unwrap_or(true) {
                 stop(&mut child);
                 return RunEnd::LostClaim;
             }
+            let _ = hub.write(|r| r.heartbeat(id, run));
         }
         std::thread::sleep(POLL);
     }
@@ -187,6 +207,12 @@ fn clip(s: &str) -> String {
 
 fn push_branch(wt: &Path, branch: &str) -> Result<(), NetError> {
     git(wt, &["push", "-q", "-u", "origin", &format!("HEAD:refs/heads/{branch}")]).map(|_| ())
+}
+
+fn remote_dir(hub: &Hub, id: &str, run: &str) -> Result<PathBuf, NetError> {
+    let d = hub.cfg.work_dir().join("remote").join(format!("{id}-{run}"));
+    std::fs::create_dir_all(d.join(".veneer"))?;
+    Ok(d)
 }
 
 /// Clone (or reuse) the repo, add a worktree on `veneer/<id>` from the base,

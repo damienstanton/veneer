@@ -43,6 +43,10 @@ pub struct NetConfig {
     pub claude_args: Vec<String>,
     #[serde(default)]
     pub agy_args: Vec<String>,
+    /// Antigravity remote project (name or id) to launch Remote Agents in.
+    /// When set, this machine dispatches `agy` cloud tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agy_remote_project: Option<String>,
 }
 
 fn default_branch() -> String {
@@ -139,6 +143,7 @@ impl NetConfig {
             poll_seconds: default_poll(),
             claude_args: vec![],
             agy_args: vec![],
+            agy_remote_project: None,
         }
     }
 
@@ -218,13 +223,14 @@ impl NetConfig {
             tags: self.tags.clone(),
             harnesses: self.harnesses().iter().map(|h| h.name().to_string()).collect(),
             local: self.local,
+            remote_agy: self.agy_remote_project.is_some() && self.harnesses().contains(&Harness::Agy),
         }
     }
 
     pub fn extra_args(&self, h: Harness) -> &[String] {
         match h {
             Harness::Claude => &self.claude_args,
-            Harness::Agy => &self.agy_args,
+            Harness::Agy | Harness::AgyRemote => &self.agy_args,
         }
     }
 }

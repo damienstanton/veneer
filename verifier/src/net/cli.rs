@@ -12,6 +12,7 @@ use std::path::Path;
 
 pub const USAGE: &str = "\
   veneer net init --hub <git-remote> [--name <replica>] [--tags a,b] [--harness claude,agy] [--cloud]
+                  [--agy-remote <agy remote project>]   # dispatch agy cloud tasks as Remote Agents
   veneer net sync | status | worker [--once]
       cloud sandboxes: detected (Claude Code) or VENEER_CLOUD=<kind>; replica
       named <kind>-<session>; with VENEER_NET_HUB set no config file is needed

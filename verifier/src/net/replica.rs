@@ -34,6 +34,9 @@ pub struct Capabilities {
     pub tags: Vec<String>,
     pub harnesses: Vec<String>,
     pub local: bool,
+    /// This machine can dispatch Antigravity Remote Agents (an agy remote
+    /// project is configured), so it takes `agy` cloud tasks on their behalf.
+    pub remote_agy: bool,
 }
 
 impl Replica {
@@ -196,6 +199,10 @@ impl Replica {
 
 pub fn fits(t: &Task, caps: &Capabilities) -> bool {
     use crate::net::envelope::{HarnessPref, Where};
+    let common = t.machine.as_ref().is_none_or(|m| *m == caps.machine) && t.needs.iter().all(|n| caps.tags.contains(n));
+    if dispatches_remote_agy(t, caps) {
+        return common;
+    }
     let harness_ok = match t.harness {
         HarnessPref::Any => !caps.harnesses.is_empty(),
         h => caps.harnesses.iter().any(|x| x == h.name()),
@@ -205,10 +212,16 @@ pub fn fits(t: &Task, caps: &Capabilities) -> bool {
         Where::Local => caps.local,
         Where::Cloud => !caps.local,
     };
-    harness_ok
-        && where_ok
-        && t.machine.as_ref().is_none_or(|m| *m == caps.machine)
-        && t.needs.iter().all(|n| caps.tags.contains(n))
+    harness_ok && where_ok && common
+}
+
+/// A local machine with an agy remote project takes `where = cloud` tasks
+/// that Antigravity may run, and launches them as Remote Agents. `needs` tags
+/// still apply to the machine, which is the honest reading when it is the
+/// dispatcher; a task that needs a tag in the sandbox should not set it.
+pub fn dispatches_remote_agy(t: &Task, caps: &Capabilities) -> bool {
+    use crate::net::envelope::{HarnessPref, Where};
+    caps.local && caps.remote_agy && t.location == Where::Cloud && matches!(t.harness, HarnessPref::Agy | HarnessPref::Any)
 }
 
 #[cfg(test)]
@@ -223,7 +236,23 @@ mod tests {
             tags: vec!["macos".into()],
             harnesses: vec!["claude".into(), "agy".into()],
             local: true,
+            remote_agy: false,
         }
+    }
+
+    #[test]
+    fn a_remote_agy_dispatcher_takes_agy_cloud_tasks_only() {
+        use crate::net::envelope::Where;
+        let mut t = task();
+        t.location = Where::Cloud;
+        t.harness = HarnessPref::Agy;
+        assert!(!fits(&t, &caps()), "a plain local machine takes no cloud task");
+        let disp = Capabilities { remote_agy: true, ..caps() };
+        assert!(fits(&t, &disp));
+        t.harness = HarnessPref::Claude;
+        assert!(!fits(&t, &disp), "Claude cloud tasks are for Claude cloud sessions");
+        t.harness = HarnessPref::Any;
+        assert!(fits(&t, &disp));
     }
 
     #[test]

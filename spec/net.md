@@ -121,7 +121,15 @@ a replica with `local = false`: it takes `where = cloud` tasks and never
   two sessions from ever writing the same op file.
 - **No config file.** With `VENEER_NET_HUB` set and no config file, the config
   is derived from the environment (`VENEER_NET_BRANCH`, `VENEER_NET_TAGS`).
-- **No worker.** Antigravity Remote Agents have no headless mode, and a
-  Claude Code cloud session is itself the agent, so a cloud leaf claims with
-  `veneer task claim <id>` from the task's repo and follows the same leaf
-  protocol and proof of done.
+- **Self-claim.** A Claude Code cloud session is itself the agent, so it
+  claims with `veneer task claim <id>` from the task's repo and follows the
+  same leaf protocol and proof of done.
+- **Dispatched remote agents.** A local replica whose config names an agy
+  remote project (`agy_remote_project`) and has agy also takes `where = cloud`
+  tasks that allow agy. It claims them, opens `agy --remote-agent -i <prompt>`
+  in a pseudo-terminal (agy has no print mode for remote agents), and spells
+  the task and run ids out in the prompt. The remote agent joins the hub as
+  its own replica and reports on that run; since holding is by run, its ops
+  are accepted. The worker pulls before each heartbeat, stops the terminal
+  once it no longer holds the task, and records the usual fallback result if
+  the lease is still its own when the terminal ends.

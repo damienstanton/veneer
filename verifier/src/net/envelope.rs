@@ -135,9 +135,6 @@ impl Task {
         if self.budget.minutes == 0 || self.budget.minutes > 24 * 60 {
             return bad("budget.minutes must be within 1..=1440".into());
         }
-        if self.harness == HarnessPref::Agy && self.location == Where::Cloud {
-            return bad("agy cannot be a cloud leaf: Antigravity remote agents have no headless mode".into());
-        }
         Ok(())
     }
 }
@@ -270,7 +267,7 @@ pub(crate) mod tests {
         let mut t = task();
         t.harness = HarnessPref::Agy;
         t.location = Where::Cloud;
-        assert!(t.validate().is_err());
+        t.validate().unwrap();
         let mut t = task();
         t.budget.minutes = 0;
         assert!(t.validate().is_err());

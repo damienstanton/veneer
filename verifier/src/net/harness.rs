@@ -10,6 +10,8 @@ use std::path::Path;
 pub enum Harness {
     Claude,
     Agy,
+    /// An Antigravity Remote Agent, launched from this machine (see `remote`).
+    AgyRemote,
 }
 
 impl Harness {
@@ -17,6 +19,7 @@ impl Harness {
         match self {
             Harness::Claude => "claude",
             Harness::Agy => "agy",
+            Harness::AgyRemote => "agy-remote",
         }
     }
 
@@ -24,6 +27,7 @@ impl Harness {
         match s {
             "claude" => Some(Harness::Claude),
             "agy" | "antigravity" => Some(Harness::Agy),
+            "agy-remote" => Some(Harness::AgyRemote),
             _ => None,
         }
     }
@@ -55,6 +59,8 @@ pub struct LaunchSpec<'a> {
     pub dialogue: &'a [String],
     pub resume_session: Option<&'a str>,
     pub extra_args: &'a [String],
+    /// The agy remote project, for [`Harness::AgyRemote`].
+    pub remote_project: Option<&'a str>,
 }
 
 /// The prompt every leaf receives. It is explicit about the skill and the exit
@@ -102,6 +108,9 @@ pub fn leaf_prompt(spec: &LaunchSpec) -> String {
 }
 
 pub fn invocation(h: Harness, spec: &LaunchSpec) -> Invocation {
+    if h == Harness::AgyRemote {
+        return super::remote::invocation(spec);
+    }
     let prompt = leaf_prompt(spec);
     let mut args: Vec<String> = vec!["-p".into(), prompt, "--output-format".into(), "json".into()];
     match h {
@@ -136,6 +145,7 @@ pub fn invocation(h: Harness, spec: &LaunchSpec) -> Invocation {
                 args.extend(["--conversation".into(), s.into()]);
             }
         }
+        Harness::AgyRemote => unreachable!("handled above"),
     }
     args.extend(spec.extra_args.iter().cloned());
     Invocation {
@@ -227,6 +237,8 @@ pub fn parse_output(h: Harness, stdout: &str) -> Result<RunOutput, NetError> {
                 usage,
             })
         }
+        // The remote agent reports through the hub; its terminal output is a TUI.
+        Harness::AgyRemote => Err(NetError::Invalid("agy-remote output is a terminal session, not JSON".into())),
         Harness::Agy => {
             let o: AgyOut = serde_json::from_str(json).map_err(bad)?;
             let ok = o.status == "SUCCESS";
@@ -294,6 +306,7 @@ mod tests {
             dialogue: d,
             resume_session: resume,
             extra_args: &[],
+            remote_project: None,
         }
     }
 
