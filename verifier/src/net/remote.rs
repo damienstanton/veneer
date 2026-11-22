@@ -33,12 +33,14 @@ pub fn remote_prompt(spec: &LaunchSpec) -> String {
          try `find / -maxdepth 5 -type d -name tasknet -not -path '*/proc/*' 2>/dev/null`). From its root run \
          `bin/veneer-up`. It installs veneer and joins the hub; if it fails, put its full output in your final \
          answer and stop.\n\
-         3. Find the checkout of {repo} the same way (or `git clone https://github.com/{repo}`). In it run \
+         3. Find the checkout of {repo} the same way; if it is not in the workspace (repos of another owner \
+         cannot be connected to the same project), `git clone https://github.com/{repo}` after step 2. In it run \
          `git fetch origin {base} && git checkout -B {branch} origin/{base} && veneer init`, and do all the \
          work below in that checkout.\n\
          4. Before reporting done, commit and run `git push -u origin {branch}`, then pass `--branch {branch}` \
          to `veneer task complete`.\n\
-         Pushing uses `GH_TOKEN` from this project's secrets; never print it.\n\n",
+         Git authenticates with this project's secrets (`GH_TOKEN_<OWNER>` per owner, else `GH_TOKEN`), \
+         set up by `bin/veneer-up`; never print them.\n\n",
         id = spec.task_id,
         repo = t.repo,
         base = t.base,
