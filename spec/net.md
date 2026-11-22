@@ -106,3 +106,22 @@ name, hub remote and branch, capability tags, harnesses (detected when empty),
 `local` (false for cloud replicas), a map of repos to local clones, work
 directory, lease, poll interval, and extra harness arguments. `VENEER_REPLICA`
 overrides the name.
+
+## 7. Cloud sandboxes
+
+A cloud sandbox (a Claude Code cloud session, an Antigravity Remote Agent) is
+a replica with `local = false`: it takes `where = cloud` tasks and never
+`local` ones. It is recognized by `CLAUDE_CODE_REMOTE=true` or declared with
+`VENEER_CLOUD=<kind>`.
+
+- **Names.** Unless `VENEER_REPLICA` is set, a cloud replica is named
+  `<kind>-<last 12 alphanumerics of the session id>` (`VENEER_SESSION_ID`, then
+  Claude Code's session ids), re-derived on every load. A container image can
+  be snapshotted with a config file inside it; a fresh name per session keeps
+  two sessions from ever writing the same op file.
+- **No config file.** With `VENEER_NET_HUB` set and no config file, the config
+  is derived from the environment (`VENEER_NET_BRANCH`, `VENEER_NET_TAGS`).
+- **No worker.** Antigravity Remote Agents have no headless mode, and a
+  Claude Code cloud session is itself the agent, so a cloud leaf claims with
+  `veneer task claim <id>` from the task's repo and follows the same leaf
+  protocol and proof of done.

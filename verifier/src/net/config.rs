@@ -74,10 +74,39 @@ fn data_dir() -> PathBuf {
         .unwrap_or_else(|| home().join(".local/share/veneer/net"))
 }
 
-/// A replica name derived from the host, restricted to the op-file alphabet.
+/// The cloud sandbox this process runs in, if any: `VENEER_CLOUD` (any
+/// non-empty value but `0`), else a Claude Code cloud session. Antigravity
+/// Remote Agents expose no stable marker, so their setup sets `VENEER_CLOUD`.
+pub fn cloud_sandbox() -> Option<String> {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    if let Some(v) = env("VENEER_CLOUD") {
+        return (v != "0").then(|| if v == "1" { "cloud".into() } else { v });
+    }
+    (env("CLAUDE_CODE_REMOTE").as_deref() == Some("true")).then(|| "claude-cloud".into())
+}
+
+/// A stable name for this sandbox: its kind plus the tail of the session id.
+fn cloud_replica(kind: &str) -> String {
+    let id = ["VENEER_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()));
+    match id {
+        Some(id) => {
+            let alnum: Vec<char> = id.chars().filter(char::is_ascii_alphanumeric).collect();
+            let tail: String = alnum[alnum.len().saturating_sub(12)..].iter().collect();
+            format!("{kind}-{}", tail.to_ascii_lowercase())
+        }
+        None => format!("{kind}-{:x}", super::hlc::now_ms()),
+    }
+}
+
+/// A replica name: `VENEER_REPLICA`, else the cloud sandbox's session, else
+/// the host name, restricted to the op-file alphabet.
 pub fn default_replica() -> String {
     let raw = std::env::var("VENEER_REPLICA")
         .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| cloud_sandbox().map(|k| cloud_replica(&k)))
         .or_else(|| {
             std::process::Command::new("hostname")
                 .output()
@@ -121,12 +150,37 @@ impl NetConfig {
             toml::from_str(&text).map_err(|e| NetError::Invalid(format!("{}: {e}", path.display())))?;
         if let Ok(r) = std::env::var("VENEER_REPLICA") {
             c.replica = r;
+        } else if !c.local && cloud_sandbox().is_some() {
+            // A cloud container can be snapshotted with this file in it; a
+            // name per session keeps two sessions from sharing one op log.
+            c.replica = default_replica();
         }
         Ok(c)
     }
 
+    /// The config file, or, when it is missing and `VENEER_NET_HUB` is set,
+    /// one derived from the environment (ephemeral cloud sandboxes keep no
+    /// `~/.config`). Optional: `VENEER_NET_BRANCH`, `VENEER_NET_TAGS`.
     pub fn load() -> Result<NetConfig, NetError> {
-        Self::load_from(&config_path())
+        let path = config_path();
+        match std::env::var("VENEER_NET_HUB") {
+            Ok(hub) if !hub.is_empty() && !path.exists() => Ok(Self::from_env(hub)),
+            _ => Self::load_from(&path),
+        }
+    }
+
+    pub fn from_env(hub: String) -> NetConfig {
+        let mut c = NetConfig::new(default_replica(), hub);
+        c.local = cloud_sandbox().is_none();
+        if let Ok(b) = std::env::var("VENEER_NET_BRANCH")
+            && !b.is_empty()
+        {
+            c.branch = b;
+        }
+        if let Ok(t) = std::env::var("VENEER_NET_TAGS") {
+            c.tags = t.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
+        }
+        c
     }
 
     pub fn store_to(&self, path: &Path) -> Result<(), NetError> {
@@ -201,6 +255,14 @@ mod tests {
     #[test]
     fn default_replica_is_a_valid_file_name() {
         assert!(super::super::op::valid_replica(&default_replica()));
+    }
+
+    #[test]
+    fn cloud_replica_names_are_valid_and_stable() {
+        let a = cloud_replica("claude-cloud");
+        assert!(super::super::op::valid_replica(&a), "{a}");
+        assert!(a.starts_with("claude-cloud-"));
+        assert!(super::super::op::valid_replica(&cloud_replica("agy-remote")));
     }
 
     #[test]

@@ -22,11 +22,48 @@ jobs:
   release-please:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: rp
         with:
           # A PAT or app token makes CI run on the release PR; the default
           # GITHUB_TOKEN cannot trigger workflows. Falls back so it still works.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # Prebuilt binaries, so cloud sandboxes (Claude Code, Antigravity Remote
+  # Agents) and Macs can install veneer without a Rust build. Names match
+  # what tasknet's bin/veneer-up downloads: veneer-<target>.tar.gz.
+  binaries:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - name: Install Rust (stable)
+        run: rustup update stable && rustup default stable && rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --manifest-path verifier/Cargo.toml --target ${{ matrix.target }}
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dir=verifier/target/${{ matrix.target }}/release
+          strip "$dir/veneer" || true
+          tar -czf veneer-${{ matrix.target }}.tar.gz -C "$dir" veneer
+          shasum -a 256 veneer-${{ matrix.target }}.tar.gz > veneer-${{ matrix.target }}.tar.gz.sha256
+          gh release upload ${{ needs.release-please.outputs.tag_name }} \
+            veneer-${{ matrix.target }}.tar.gz veneer-${{ matrix.target }}.tar.gz.sha256 --clobber

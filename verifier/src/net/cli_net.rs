@@ -1,7 +1,7 @@
 //! CLI for `veneer net` (setup, sync, worker) and `veneer memory`.
 
 use super::cli::{fail, flag, print, usage};
-use super::config::{NetConfig, config_path, default_replica};
+use super::config::{NetConfig, config_path};
 use super::error::NetError;
 use super::hub::{Hub, LeafContext};
 use super::op::MemKind;
@@ -50,7 +50,7 @@ pub fn cmd_net(args: &[String]) -> i32 {
 fn init(rest: &[String]) -> i32 {
     let Some(hub) = flag(rest, "--hub") else { return usage() };
     let path = config_path();
-    let mut cfg = NetConfig::load_from(&path).unwrap_or_else(|_| NetConfig::new(default_replica(), hub.into()));
+    let mut cfg = NetConfig::load_from(&path).unwrap_or_else(|_| NetConfig::from_env(hub.into()));
     cfg.hub = hub.into();
     if let Some(n) = flag(rest, "--name") {
         cfg.replica = n.into();
