@@ -56,6 +56,38 @@ pub struct UsageArgs {
     pub paths: Vec<String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct TaskArgs {
+    /// "list", "show", "new", "answer", or "cancel" (leaf-side progress, ask
+    /// and complete stay on the CLI, where the worktree's context lives).
+    pub action: String,
+    /// Task id for show/answer/cancel.
+    pub id: Option<String>,
+    /// For "new": the task envelope (title, repo, prompt, acceptance, ...).
+    pub envelope: Option<serde_json::Value>,
+    /// For "answer" / "cancel": the answer or the reason.
+    pub text: Option<String>,
+    /// For "list": include finished tasks.
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct MemoryArgs {
+    /// "recall", "get", "put", or "del".
+    pub action: String,
+    /// global | repo:<owner/name> | task:<id>
+    pub scope: Option<String>,
+    pub key: Option<String>,
+    /// fact | decision | preference | handoff
+    pub kind: Option<String>,
+    pub value: Option<String>,
+    /// For "recall": narrow to a repo and/or task, a kind, a key prefix.
+    pub repo: Option<String>,
+    pub task: Option<String>,
+    pub prefix: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct VeneerServer {
     root: PathBuf,
@@ -66,7 +98,7 @@ pub struct VeneerServer {
 #[tool_router]
 impl VeneerServer {
     pub fn new(root: PathBuf) -> Self {
-        Self { root, tool_router: Self::tool_router() }
+        Self { root, tool_router: Self::tool_router() + Self::net_router() }
     }
 
     #[tool(description = "Run the veneer laws (module budget, sealing, diff idempotency). Returns a JSON array of findings; empty means clean.")]
@@ -216,11 +248,32 @@ impl VeneerServer {
     }
 }
 
+#[tool_router(router = net_router)]
+impl VeneerServer {
+    #[tool(description = "veneer net task queue shared by every Claude Code and Antigravity session. action=list|show|new|answer|cancel. \"new\" takes an envelope {title, repo, prompt, acceptance[], harness: claude|agy|any, where: local|cloud|any, needs[], depends_on[], budget:{minutes}} and returns its id. A task is done only with a veneer ship-gate witness.")]
+    fn veneer_task(&self, args: Parameters<TaskArgs>) -> CallToolResult {
+        let body = match crate::net::mcp::task(args.0) {
+            Ok(v) => v.to_string(),
+            Err(e) => findings_json_compact(&[e.finding("<mcp>")]),
+        };
+        CallToolResult::success(vec![ContentBlock::text(body)])
+    }
+
+    #[tool(description = "veneer net agent memory shared across harnesses, machines and sessions. action=recall (optional repo, task, kind, prefix) | get | put (scope, key, kind, value) | del. Scopes: global, repo:<owner/name>, task:<id>. Kinds: fact, decision, preference, handoff.")]
+    fn veneer_memory(&self, args: Parameters<MemoryArgs>) -> CallToolResult {
+        let body = match crate::net::mcp::memory(args.0) {
+            Ok(v) => v.to_string(),
+            Err(e) => findings_json_compact(&[e.finding("<mcp>")]),
+        };
+        CallToolResult::success(vec![ContentBlock::text(body)])
+    }
+}
+
 // Bumped by release-please (see release-please-config.json); pinned to Cargo.toml by mcp_server_version_matches_the_crate_version.
 #[tool_handler(
     name = "veneer",
     version = "1.0.0", // x-release-please-version
-    instructions = "veneer verifier: veneer_check for law findings; veneer_state to read/transition the lifecycle; veneer_oxidize to type-check a Rust shadow; veneer_graph to build/query the knowledge graph; veneer_usage to measure session context and cache reads."
+    instructions = "veneer verifier: veneer_check for law findings; veneer_state to read/transition the lifecycle; veneer_oxidize to type-check a Rust shadow; veneer_graph to build/query the knowledge graph; veneer_usage to measure session context and cache reads; veneer_task and veneer_memory for the cross-harness task queue and shared agent memory."
 )]
 impl ServerHandler for VeneerServer {}
 

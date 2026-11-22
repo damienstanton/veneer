@@ -8,5 +8,6 @@ pub mod mcp;
 pub mod graph;
 pub mod usage;
 pub mod cycles;
+pub mod net;
 mod graph_lift;
 mod wire;

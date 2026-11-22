@@ -45,6 +45,17 @@ To have the agent warned in-session once its context passes `[usage] budget_toke
 
     {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "veneer usage --hook"}]}]}}
 
+## Coordinate agents across harnesses and machines
+
+`veneer net` adds a task queue and shared agent memory that Claude Code and Antigravity sessions use the same way, on any machine or in the cloud. It syncs through any git remote as an op-log CRDT, so there's still no service to run.
+
+    veneer net init --hub git@github.com:you/agent-hub.git   # once per machine or cloud session
+    veneer task new task.json                                # orchestrator: queue a task
+    veneer net worker                                        # a machine: claim tasks, run claude -p or agy -p
+    veneer task wait <id>                                    # orchestrator: done, failed, or a question
+
+A task only counts as done when it carries a passed ship gate's hash. Leaves leave handoffs and facts with `veneer memory put`, and the next agent, in either harness, reads them with `veneer memory recall`. The contract is `spec/net.md`.
+
 ## What it doesn't claim
 
 veneer doesn't claim your code is correct. Oxidation judges the shadow, and keeping the shadow faithful to the real code is the agent's job. The exact boundary of every guarantee is in `spec/oxidation.md` §5.

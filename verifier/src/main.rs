@@ -16,6 +16,7 @@ USAGE:
   veneer state get [--json] | set <phase> [--ref k=v ...] | reset
   veneer usage [--compact] [--latest] [transcripts...] | --cycles | --hook
   veneer mcp
+coordination (veneer net):
 ";
 
 // Embedded skill (kept in sync by include_str! — a build error if files move).
@@ -492,8 +493,11 @@ fn main() {
         Some("state") => cmd_state(&root, &args[1..]),
         Some("usage") => cmd_usage(&root, &args[1..]),
         Some("mcp") => veneer::mcp::serve(root.clone()),
+        Some("net") => veneer::net::cli_net::cmd_net(&args[1..]),
+        Some("task") => veneer::net::cli::cmd_task(&root, &args[1..]),
+        Some("memory") => veneer::net::cli_net::cmd_memory(&root, &args[1..]),
         _ => {
-            eprintln!("{USAGE}");
+            eprintln!("{USAGE}{}", veneer::net::cli::USAGE);
             2
         }
     };
