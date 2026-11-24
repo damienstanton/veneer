@@ -21,9 +21,9 @@ veneer mcp
 
 The repository has four layers:
 
-**`spec/`** — normative contracts. `spec/veneer.md` is the harness contract (laws, lifecycle, finding schema, binary surface, state file). `spec/basis.md` is the CTT formal foundation. `spec/oxidation.md` is the lift/soundness spec for the Rust shadow check. Read these before changing law semantics.
+**`spec/`** — normative contracts. `spec/veneer.md` is the harness contract (laws, lifecycle, finding schema, binary surface, state file). `spec/basis.md` is the CTT formal foundation. `spec/oxidation.md` is the lift/soundness spec for the Rust shadow check. `spec/net.md` is the coordination contract (op-log CRDT, task fold rules, proof of done, worker). Read these before changing law semantics.
 
-**`verifier/`** — the Rust binary (`veneer`). One crate, thirteen modules:
+**`verifier/`** — the Rust binary (`veneer`). One crate, fourteen top-level modules:
 - `kernel` — the CTT `Expr` ADT, gas-bounded `eval`, and `check_eq` (judgemental equality). Used only for lifting FNV hashes into canonical forms to verify idempotency. No law logic lives here.
 - `laws` — the three laws as deterministic checks, plus the `Finding` value type, `Config` (from `.veneer/config.toml`), file walker, and `run_checks` orchestrator. The authoritative output surface: every veneer result is a `Finding`.
 - `patch` — unified-diff parse/apply over an in-memory tree; pure value
@@ -36,7 +36,12 @@ The repository has four layers:
 - `intent` — the `AgentIntent` ADT (expand_context / propose_diff / conclude / oxidize / query_graph) dispatched by `--intent` and MCP.
 - `usage` — per-session token accounting from an agent's own transcript (Claude Code JSONL today, behind the `TranscriptFormat` sum type): turns, cache reads, mean/peak/last context, reads past `[usage] budget_tokens`, `context_budget` warnings, and the `veneer usage --hook` response. Orthogonal to the laws and the gate.
 - `cycles` — the per-cycle ledger `.veneer/usage.jsonl`: one line appended, best-effort, on each real transition into Ship, holding that cycle's own cache reads. A sidecar like the graph, never part of the hashed state file.
-- `mcp` — thin MCP adapter over `laws`, `state`, `oxidize`, `graph`, and `usage` (`veneer_check`, `veneer_state`, `veneer_oxidize`, `veneer_graph`, `veneer_usage` tools, served over stdio via `rmcp`).
+- `mcp` — thin MCP adapter over `laws`, `state`, `oxidize`, `graph`, `usage`, and `net` (`veneer_check`, `veneer_state`, `veneer_oxidize`, `veneer_graph`, `veneer_usage`, `veneer_task`, `veneer_memory` tools, served over stdio via `rmcp`).
+- `net` — veneer net, the cross-harness coordination layer (`spec/net.md`), in its own submodules:
+  - `envelope` (task/result wire types, `Witness`), `error` (`NetError`, rendered as Protocol findings), `hlc` (hybrid logical clock), `op` (op alphabet, per-replica `ops/<replica>.jsonl` append/load), `tasks` (deterministic task fold, `tasks_tests.rs` beside it), `memory` (LWW memory map), `replica` (emit ops, snapshot, claimable).
+  - `sync` (git hub: open, lock, commit-rebase-push), `hub` (a replica bound to its hub; `LeafContext` from `.veneer/task.json` or `VENEER_TASK`/`VENEER_RUN`), `config` (`~/.config/veneer/net.toml`).
+  - `witness` (ship-gate proof for `done`), `harness` (Claude Code / Antigravity headless adapters), `worker` (claim, worktree, supervise, fallback result).
+  - `cli`, `cli_net`, `mcp` — `veneer task|memory|net` and the `veneer_task`/`veneer_memory` MCP tools.
 - `main` — CLI dispatch only; no logic.
 
 **`skill/veneer/SKILL.md`** — the agent-facing skill. `main.rs` embeds it with `include_str!` so it is always in sync with the binary. `veneer init` writes it to `.claude/skills/veneer/` and `.agents/skills/veneer/`.
@@ -46,6 +51,7 @@ The repository has four layers:
 ## Key design invariants
 
 - **Errors are data**: everything fails as a `Finding`, never a panic or naked exception.
+- **Net convergence**: the task and memory folds are pure functions of the op set (stamp-ordered); never make a rule depend on arrival order or local wall time except through `status_at(now)`. A `done` result without a valid ship-gate witness is refused at the CLI and ignored by every fold.
 - **Determinism**: `run_checks` on the same tree always produces the same findings. The `clean_hash` (FNV-1a over raw config bytes + tree hash) is the equality witness for the ship gate and the clean-tree short-circuit.
 - **`--compact` vs full**: `--compact` and MCP always omit `suggested_fix` to save agent tokens. Per-law fix guidance lives in the skill, not in the binary output.
 - **Walker skips**: `.git`, `.veneer`, `target`, `node_modules`, `.claude`, `.agents` (dirs); `*.lock`, `package-lock.json`, `pnpm-lock.yaml` (generated files). Lockfiles never count toward LoC budget or tree hash.

@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","is_error":false,"duration_ms":81234,"duration_api_ms":70211,"num_turns":7,"result":"Added exponential backoff and tests. PR opened.","session_id":"8b0c3a2e-1111-4f5e-9d7a-0123456789ab","total_cost_usd":0.4123,"usage":{"input_tokens":1200,"output_tokens":3400,"cache_read_input_tokens":90000}}

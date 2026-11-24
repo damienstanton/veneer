@@ -1,6 +1,6 @@
 ---
 name: veneer
-description: Minimal CTT-grounded harness managing the full task lifecycle (plan → implement → verify → ship) with deterministic law checking and gh-based ticket/PR flow. Use when starting, resuming, or shipping any coding task in a veneer-enabled project (one with a .veneer/ directory or veneer binary on PATH).
+description: Minimal CTT-grounded harness managing the full task lifecycle (plan → implement → verify → ship) with deterministic law checking and gh-based ticket/PR flow, plus veneer net, a task queue and shared agent memory across Claude Code and Antigravity sessions on any machine. Use when starting, resuming, or shipping any coding task in a veneer-enabled project (one with a .veneer/ directory or veneer binary on PATH), when handing work to another agent or harness, or when VENEER_TASK is set or .veneer/task.json exists.
 ---
 
 # veneer
@@ -207,3 +207,62 @@ The gate has already proven the tree clean; this phase is delivery.
    `veneer state set ship --ref pr=<N>`.
 4. Report the PR URL (or the branch name if untracked) to the user.
 5. Start the next cycle when new work arrives: `veneer state set plan`.
+
+## Coordination (veneer net)
+
+`veneer net` is a task queue plus shared memory that every Claude Code and
+Antigravity session reads and writes the same way, through this CLI or the
+`veneer_task` / `veneer_memory` MCP tools. It syncs through a git hub, so it
+works across machines and cloud sessions. Every command prints JSON; failures
+are protocol findings. If `veneer net status` says no config, ask the user for
+the hub remote and run `veneer net init --hub <git-remote>`. Cloud sandboxes are
+detected in Claude Code; in an Antigravity Remote Agent set `VENEER_CLOUD=agy-remote`
+first. With `VENEER_NET_HUB` set, no init is needed. Setting up a hub, and giving
+each environment access to it, is `docs/net-setup.md` in the veneer repository:
+ask the user for the hub remote, never guess one, and never ask for or print a
+token.
+
+**Which role am I?** You are a **leaf** if `VENEER_TASK` is set or
+`.veneer/task.json` exists in the working directory. Otherwise you are an
+**orchestrator**.
+
+### Leaf
+
+1. `veneer task show` for the task, then `veneer memory recall` for what earlier
+   agents left (it defaults to this task and its repo).
+2. Run the normal loop above, in this worktree, on the branch you were given.
+   `veneer state` already carries `task=<id>` in its refs.
+3. `veneer task progress "<milestone>"` at real milestones, not every step.
+4. Before stopping, record what the next agent needs:
+   `veneer memory put task:<id> <key> handoff "<what's done, what's next>"`;
+   lasting repo facts and decisions go in `repo:<owner/name>` as `fact` or `decision`.
+5. Finish with exactly one of:
+   - `veneer task complete --status done --summary "<one line>" --pr <url> --check '<criterion>=pass' ...`
+     after `veneer state set ship` succeeded and the work is committed. `done` is
+     refused without a valid ship gate; that is the protocol, not a bug.
+   - `veneer task complete --status failed --summary "<why>"`.
+   - `veneer task ask "<question>"` when you need a decision. Stop after asking;
+     the task resumes in your session once answered.
+
+### Orchestrator
+
+1. Break the work into a DAG of tasks, each self-contained: the leaf sees only
+   its envelope, never your context. Prefer tasks one veneer cycle can ship.
+2. Queue each with `veneer task new <file|->`, JSON like:
+   `{"title": "...", "repo": "owner/name", "prompt": "...", "acceptance": ["..."],
+   "context": ["src/x.rs"], "harness": "any", "where": "any", "needs": [],
+   "depends_on": ["<id>"], "budget": {"minutes": 60}}`.
+   A task becomes claimable only once everything in `depends_on` is done.
+3. Route by harness and place: `"where": "local"` with `"needs": ["macos"]` for
+   Xcode or simulator work; `"harness": "agy"` only for local machines
+   (Antigravity has no headless cloud mode); `"where": "cloud"` for work a cloud
+   Claude session can do. Workers (`veneer net worker`) pick up local tasks; for
+   a cloud task, start a cloud session and tell it to run
+   `veneer task claim <id>` and then follow the leaf steps.
+4. `veneer task wait <id> ...` returns when each task is done, failed,
+   canceled, or needs input. Answer questions with `veneer task answer <id> "<text>"`.
+5. Check each `done` result: `result.witness.clean_hash` and `commit` show the
+   gate passed on that commit, and `self_reported: false` means the worker
+   wrote the result because the leaf did not; review that work by hand.
+6. Record cross-task decisions with `veneer memory put repo:<owner/name> ...` so
+   later leaves inherit them.
