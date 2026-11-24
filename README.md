@@ -54,7 +54,7 @@ To have the agent warned in-session once its context passes `[usage] budget_toke
     veneer net worker                                        # a machine: claim tasks, run claude -p or agy -p
     veneer task wait <id>                                    # orchestrator: done, failed, or a question
 
-A task only counts as done when it carries a passed ship gate's hash. Leaves leave handoffs and facts with `veneer memory put`, and the next agent, in either harness, reads them with `veneer memory recall`. The contract is `spec/net.md`.
+A task only counts as done when it carries a passed ship gate's hash. Leaves leave handoffs and facts with `veneer memory put`, and the next agent, in either harness, reads them with `veneer memory recall`. The contract is `spec/net.md`. To set up the private repository it syncs through, and how each kind of machine or cloud sandbox gets access to it, see `docs/net-setup.md`.
 
 ## What it doesn't claim
 

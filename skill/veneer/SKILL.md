@@ -217,7 +217,10 @@ works across machines and cloud sessions. Every command prints JSON; failures
 are protocol findings. If `veneer net status` says no config, ask the user for
 the hub remote and run `veneer net init --hub <git-remote>`. Cloud sandboxes are
 detected in Claude Code; in an Antigravity Remote Agent set `VENEER_CLOUD=agy-remote`
-first. With `VENEER_NET_HUB` set, no init is needed.
+first. With `VENEER_NET_HUB` set, no init is needed. Setting up a hub, and giving
+each environment access to it, is `docs/net-setup.md` in the veneer repository:
+ask the user for the hub remote, never guess one, and never ask for or print a
+token.
 
 **Which role am I?** You are a **leaf** if `VENEER_TASK` is set or
 `.veneer/task.json` exists in the working directory. Otherwise you are an
